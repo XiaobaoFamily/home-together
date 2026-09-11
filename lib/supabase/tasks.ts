@@ -7,6 +7,12 @@ export type HouseholdMember = {
   avatarUrl: string | null;
 };
 
+export type TaskCompletion = {
+  id: string;
+  completedAt: string;
+  note?: string;
+};
+
 export type AppTask = {
   id: string;
   templateId?: string;
@@ -24,6 +30,7 @@ export type AppTask = {
   note?: string;
   description?: string;
   completedAt?: string;
+  completionHistory?: TaskCompletion[];
   lastCompleted?: string;
   nextDue?: string;
 };
@@ -53,6 +60,7 @@ type JoinedInstance = {
     description: string | null;
   };
   completion_records: Array<{
+    id: string;
     note: string | null;
     completed_at: string;
     is_voided: boolean;
@@ -102,7 +110,7 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
       supabase
         .from("task_instances")
         .select(
-          "id, template_id, scheduled_date, status, assignee_profile_id, task_templates!inner(title, category, type, one_off_timing, assignee_mode, recurrence_rule, description), completion_records!completion_records_instance_id_fkey(note, completed_at, is_voided)",
+          "id, template_id, scheduled_date, status, assignee_profile_id, task_templates!inner(title, category, type, one_off_timing, assignee_mode, recurrence_rule, description), completion_records!completion_records_instance_id_fkey(id, note, completed_at, is_voided)",
         )
         .eq("household_id", householdId)
         .order("scheduled_date", { ascending: true }),
@@ -120,8 +128,36 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
     };
   });
 
+  const rows = (instanceRows ?? []) as unknown as JoinedInstance[];
   const memberNames = new Map(members.map((member) => [member.id, member.displayName]));
-  const tasks = ((instanceRows ?? []) as unknown as JoinedInstance[]).map((row) => {
+  const historyByTemplate = new Map<string, TaskCompletion[]>();
+  const nextDueByTemplate = new Map<string, string>();
+
+  for (const row of rows) {
+    const history = historyByTemplate.get(row.template_id) ?? [];
+    for (const completion of row.completion_records ?? []) {
+      if (completion.is_voided) continue;
+      history.push({
+        id: completion.id,
+        completedAt: completion.completed_at,
+        note: completion.note ?? undefined,
+      });
+    }
+    historyByTemplate.set(row.template_id, history);
+
+    if (row.task_templates.type === "recurring" && row.status === "pending") {
+      const currentNextDue = nextDueByTemplate.get(row.template_id);
+      if (!currentNextDue || row.scheduled_date < currentNextDue) {
+        nextDueByTemplate.set(row.template_id, row.scheduled_date);
+      }
+    }
+  }
+
+  for (const history of historyByTemplate.values()) {
+    history.sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+  }
+
+  const tasks = rows.map((row) => {
     const completion = row.completion_records
       ?.filter((item) => !item.is_voided)
       .sort((a, b) => b.completed_at.localeCompare(a.completed_at))[0];
@@ -131,6 +167,8 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
         : row.assignee_profile_id
           ? memberNames.get(row.assignee_profile_id) ?? "家庭成员"
           : "未分配";
+
+    const completionHistory = historyByTemplate.get(row.template_id) ?? [];
 
     return {
       id: row.id,
@@ -151,6 +189,9 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
       note: completion?.note ?? undefined,
       description: row.task_templates.description ?? undefined,
       completedAt: completion?.completed_at,
+      completionHistory,
+      lastCompleted: completionHistory[0]?.completedAt,
+      nextDue: nextDueByTemplate.get(row.template_id),
     } satisfies AppTask;
   });
 

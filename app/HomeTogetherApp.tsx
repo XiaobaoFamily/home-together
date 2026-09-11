@@ -155,7 +155,7 @@ const DEMO_TASKS: AppTask[] = [
     dueDate: DEMO_TODAY,
     status: "pending",
     recurrence: "每 14 天",
-    recurrenceRule: { kind: "interval_days", interval: 14, keep_schedule: false },
+    recurrenceRule: { kind: "interval_days", interval: 14 },
     lastCompleted: "8 月 1 日",
     nextDue: "今天",
     description: "床单和枕套一起更换。",
@@ -315,6 +315,27 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function completionDateKey(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+
+function taskDisplayDate(task: AppTask) {
+  return task.status === "completed" && task.completedAt
+    ? completionDateKey(task.completedAt)
+    : task.dueDate;
+}
+
+function formatStoredMoment(value: string | undefined, fallback: string) {
+  if (!value) return fallback;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(value)) return formatDateTime(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return formatShortDate(value);
+  return value;
+}
 function toDateTimeLocal(value: string) {
   const date = new Date(value);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -355,6 +376,9 @@ function taskStatus(task: AppTask) {
 }
 
 function taskTimingText(task: AppTask) {
+  if (task.status === "completed" && task.completedAt) {
+    return formatShortDate(completionDateKey(task.completedAt)) + " 完成";
+  }
   if (isWeekOneOff(task)) {
     return task.dueDate === DEMO_WEEK[0] ? "本周内完成" : `${formatWeekRange(task.dueDate)} 内完成`;
   }
@@ -386,7 +410,7 @@ function taskStatusText(task: AppTask) {
 }
 
 function wasCompletedOnTime(task: AppTask) {
-  const completedDate = task.completedAt?.slice(0, 10);
+  const completedDate = task.completedAt ? completionDateKey(task.completedAt) : undefined;
   return Boolean(completedDate && completedDate <= taskWindowEnd(task));
 }
 
@@ -983,9 +1007,11 @@ function WeekView({ tasks, members, onToggle, onOpen, onAdd }: { tasks: AppTask[
   const [weekStartDate, setWeekStartDate] = useState(DEMO_WEEK[0]);
   const visibleWeek = mondayWeek(weekStartDate);
   const isCurrentWeek = weekStartDate === DEMO_WEEK[0];
-  const weekTasks = tasks.filter((task) => isWeekOneOff(task)
-    ? task.dueDate === visibleWeek[0]
-    : visibleWeek.includes(task.dueDate));
+  const weekTasks = tasks.filter((task) => {
+    const displayDate = taskDisplayDate(task);
+    if (task.status === "completed") return visibleWeek.includes(displayDate);
+    return isWeekOneOff(task) ? task.dueDate === visibleWeek[0] : visibleWeek.includes(task.dueDate);
+  });
   const completed = weekTasks.filter((task) => task.status === "completed").length;
   const deadlineAlerts = tasks.filter((task) =>
     isDeadlineOneOff(task) && task.status === "pending" && (
@@ -1037,7 +1063,7 @@ function WeekView({ tasks, members, onToggle, onOpen, onAdd }: { tasks: AppTask[
         <div className="day-groups">
           {visibleWeek.map((date, index) => {
             const dayTasks = weekTasks.filter((task) =>
-              !isWeekOneOff(task) && task.dueDate === date && !alertIds.has(task.id) && !weekCompletionIds.has(task.id),
+              !isWeekOneOff(task) && taskDisplayDate(task) === date && !alertIds.has(task.id) && !weekCompletionIds.has(task.id),
             );
             if (!dayTasks.length && date !== DEMO_TODAY) return null;
             return (
@@ -1084,9 +1110,9 @@ function CalendarView({ tasks, members, onOpen }: { tasks: AppTask[]; members: H
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const firstWeekday = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
   const calendarCellCount = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
-  const monthTasks = filtered.filter((task) => task.dueDate.startsWith(monthPrefix));
+  const monthTasks = filtered.filter((task) => taskDisplayDate(task).startsWith(monthPrefix));
   const days = Array.from({ length: calendarCellCount }, (_, index) => index - firstWeekday + 1).map((day) => day > 0 && day <= daysInMonth ? `${monthPrefix}-${String(day).padStart(2, "0")}` : null);
-  const selectedTasks = filtered.filter((task) => task.dueDate === selectedDate || task.completedAt?.slice(0, 10) === selectedDate);
+  const selectedTasks = filtered.filter((task) => taskDisplayDate(task) === selectedDate);
   const completed = monthTasks.filter((task) => task.status === "completed").length;
   const overdue = monthTasks.filter(isOverdue).length;
 
@@ -1112,7 +1138,7 @@ function CalendarView({ tasks, members, onOpen }: { tasks: AppTask[]; members: H
           <div className="calendar-grid">
             {days.map((date, index) => {
               if (!date) return <span className="calendar-day outside" key={`outside-${index}`} />;
-              const dateTasks = filtered.filter((task) => task.dueDate === date || task.completedAt?.slice(0, 10) === date);
+              const dateTasks = filtered.filter((task) => taskDisplayDate(task) === date);
               return <button key={date} className={`calendar-day ${date === selectedDate ? "selected" : ""} ${date === DEMO_TODAY ? "today" : ""}`} onClick={() => setSelectedDate(date)}><span>{Number(date.slice(-2))}</span><div className="date-dots">{dateTasks.slice(0, 3).map((task) => <i key={task.id} className={taskStatus(task) === "completed" ? "mint" : taskStatus(task) === "overdue" ? "coral" : "mauve"} />)}</div></button>;
             })}
           </div>
@@ -1126,13 +1152,54 @@ function CalendarView({ tasks, members, onOpen }: { tasks: AppTask[]; members: H
 function AllTasksView({ tasks, onToggle, onOpen, onAdd }: { tasks: AppTask[]; onToggle: (task: AppTask) => void; onOpen: (task: AppTask) => void; onAdd: () => void }) {
   const [tab, setTab] = useState<"recurring" | "one_off" | "archived">("recurring");
   const [query, setQuery] = useState("");
-  const visible = tasks.filter((task) => tab === "archived" ? false : task.type === tab).filter((task) => task.title.includes(query));
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matchesQuery = (task: AppTask) => task.title.toLocaleLowerCase().includes(normalizedQuery);
+  const recurringByTemplate = new Map<string, AppTask>();
+
+  for (const task of tasks.filter((item) => item.type === "recurring")) {
+    const key = task.templateId ?? task.id;
+    const current = recurringByTemplate.get(key);
+    if (!current
+      || (task.status === "pending" && current.status !== "pending")
+      || (task.status === current.status && task.status === "pending" && task.dueDate < current.dueDate)
+      || (task.status !== "pending" && current.status !== "pending" && (task.completedAt ?? "") > (current.completedAt ?? ""))) {
+      recurringByTemplate.set(key, task);
+    }
+  }
+
+  const recurringTasks = [...recurringByTemplate.values()]
+    .filter(matchesQuery)
+    .sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.title.localeCompare(right.title, "zh-CN"));
+  const oneOffTasks = tasks.filter((task) => task.type === "one_off" && matchesQuery(task));
+  const pendingOneOffTasks = oneOffTasks
+    .filter((task) => task.status !== "completed")
+    .sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.title.localeCompare(right.title, "zh-CN"));
+  const completedOneOffTasks = oneOffTasks
+    .filter((task) => task.status === "completed")
+    .sort((left, right) => (right.completedAt ?? right.dueDate).localeCompare(left.completedAt ?? left.dueDate));
+
   return (
     <div className="page-shell all-tasks-page">
       <section className="page-heading"><div><p className="eyebrow">家庭清单</p><h1>全部事项</h1><p className="heading-copy">长期节奏和临时小事，都在这里看得清楚。</p></div><button className="primary-button" onClick={onAdd}><Plus />添加事项</button></section>
-      <div className="task-tools"><div className="segmented-control tabs"><button className={tab === "recurring" ? "active" : ""} onClick={() => setTab("recurring")}>周期家务 <span>{tasks.filter((task) => task.type === "recurring").length}</span></button><button className={tab === "one_off" ? "active" : ""} onClick={() => setTab("one_off")}>一次性家事 <span>{tasks.filter((task) => task.type === "one_off").length}</span></button><button className={tab === "archived" ? "active" : ""} onClick={() => setTab("archived")}>已归档</button></div><label className="search-box"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索事项" /><span className="sr-only">搜索事项</span></label></div>
-      {tab === "recurring" && <div className="list-summary"><div><Repeat2 /><p><strong>让家务有自己的节奏</strong><span>完成后会根据实际日期计算下一次。</span></p></div><span>{visible.filter((task) => task.status === "pending").length} 项待处理</span></div>}
-      <section className="catalog-list">{visible.length ? visible.map((task) => <TaskRow key={task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message={tab === "archived" ? "这里还没有归档事项。" : "没有找到符合条件的事项。"} />}</section>
+      <div className="task-tools"><div className="segmented-control tabs"><button className={tab === "recurring" ? "active" : ""} onClick={() => setTab("recurring")}>周期家务 <span>{recurringByTemplate.size}</span></button><button className={tab === "one_off" ? "active" : ""} onClick={() => setTab("one_off")}>一次性家事 <span>{tasks.filter((task) => task.type === "one_off").length}</span></button><button className={tab === "archived" ? "active" : ""} onClick={() => setTab("archived")}>已归档</button></div><label className="search-box"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索事项" /><span className="sr-only">搜索事项</span></label></div>
+
+      {tab === "recurring" && <>
+        <div className="list-summary"><div><Repeat2 /><p><strong>按照下一次应做日期排列</strong><span>已经晚了的事项会排在最前面；完成历史请点进事项查看。</span></p></div><span>{recurringTasks.length} 项周期安排</span></div>
+        <section className="catalog-list">{recurringTasks.length ? recurringTasks.map((task) => <TaskRow key={task.templateId ?? task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="没有找到符合条件的周期家务。" />}</section>
+      </>}
+
+      {tab === "one_off" && <div className="one-off-sections">
+        <section className="catalog-section">
+          <div className="catalog-section-heading"><div><h2>未完成</h2><p>按需要完成的日期从早到晚排列</p></div><span>{pendingOneOffTasks.length}</span></div>
+          <div className="catalog-list">{pendingOneOffTasks.length ? pendingOneOffTasks.map((task) => <TaskRow key={task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="没有未完成的一次性家事。" />}</div>
+        </section>
+        <section className="catalog-section completed-section">
+          <div className="catalog-section-heading"><div><h2>已完成</h2><p>按实际完成时间从晚到早排列</p></div><span>{completedOneOffTasks.length}</span></div>
+          <div className="catalog-list">{completedOneOffTasks.length ? completedOneOffTasks.map((task) => <TaskRow key={task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="还没有已完成的一次性家事。" />}</div>
+        </section>
+      </div>}
+
+      {tab === "archived" && <section className="catalog-list"><EmptyState message="这里还没有归档事项。" /></section>}
     </div>
   );
 }
@@ -1311,7 +1378,7 @@ function TaskEditorModal({ initialTask, members, onClose, onSave }: { initialTas
         ? new Date(completedAt).toISOString()
         : initialTask?.completedAt,
       recurrence: type === "recurring" ? recurrenceText(recurrenceKind, normalizedInterval) : undefined,
-      recurrenceRule: type === "recurring" ? { kind: recurrenceKind, interval: normalizedInterval, keep_schedule: Boolean(initialTask?.recurrenceRule?.keep_schedule) } : null,
+      recurrenceRule: type === "recurring" ? { kind: recurrenceKind, interval: normalizedInterval } : null,
       lastCompleted: type === "recurring" ? initialTask?.lastCompleted : undefined,
       nextDue: type === "recurring" ? initialTask?.nextDue : undefined,
     });
@@ -1353,15 +1420,29 @@ function CompletionSheet({ task, onClose, onSave }: { task: AppTask; onClose: ()
 
 function TaskDetail({ task, onClose, onToggle, onEdit, onDelete }: { task: AppTask; onClose: () => void; onToggle: (task: AppTask) => void; onEdit: (task: AppTask) => void; onDelete: (task: AppTask) => void }) {
   const Icon = CATEGORY_ICONS[task.category] ?? Sparkles;
+  const [historyPage, setHistoryPage] = useState(0);
+  const history = task.completionHistory?.length
+    ? task.completionHistory
+    : task.completedAt
+      ? [{ id: task.id, completedAt: task.completedAt, note: task.note }]
+      : [];
+  const historyPageCount = Math.max(1, Math.ceil(history.length / 5));
+  const currentHistoryPage = Math.min(historyPage, historyPageCount - 1);
+  const visibleHistory = history.slice(currentHistoryPage * 5, currentHistoryPage * 5 + 5);
+
   return (
     <div className="detail-backdrop">
       <aside className="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title">
         <div className="detail-top"><span className="task-icon large"><Icon /></span><div className="detail-top-actions"><button className="icon-button" onClick={() => onEdit(task)} aria-label="编辑家务"><Pencil /></button><button className="icon-button" onClick={onClose} aria-label="关闭详情"><X /></button></div></div>
-        <div className="detail-title"><p>{task.type === "recurring" ? "周期家务" : isWeekOneOff(task) ? "一次性家务 · 按周完成" : "一次性家务 · 截止日期"}</p><h2 id="detail-title">{task.title}</h2><span className={`status-label ${taskStatus(task)}`}>{taskStatusText(task)}</span></div>
+        <div className="detail-title"><p>{task.type === "recurring" ? "周期家务" : isWeekOneOff(task) ? "一次性家务 · 按周完成" : "一次性家务 · 截止日期"}</p><h2 id="detail-title">{task.title}</h2><span className={"status-label " + taskStatus(task)}>{taskStatusText(task)}</span></div>
         {task.description && <p className="detail-description">{task.description}</p>}
-        <div className="detail-facts"><div><Clock3 /><span>{task.type === "recurring" ? "计划日期" : isWeekOneOff(task) ? "完成周" : "截止日期"}</span><strong>{isWeekOneOff(task) ? formatWeekRange(task.dueDate) : formatShortDate(task.dueDate)}</strong></div><div><CircleUserRound /><span>负责人</span><strong>{task.assignee}</strong></div>{task.recurrence && <div><Repeat2 /><span>重复规则</span><strong>{task.recurrence}</strong></div>}</div>
-        {task.type === "recurring" && <section className="rhythm-card"><h3>这个事项的节奏</h3><div><p><span>上次完成</span><strong>{task.lastCompleted ?? "还没有记录"}</strong></p><i /><p><span>下次应做</span><strong>{task.nextDue ?? formatShortDate(task.dueDate)}</strong></p></div><small>提前完成后，默认从实际完成日重新计算。</small></section>}
-        <section className="history-section"><h3>最近记录</h3>{task.status === "completed" ? <div className="history-item"><span><Check /></span><div><strong>{task.completedAt ? formatDateTime(task.completedAt) : "今天"} 完成</strong><p>{task.note || "没有添加备注"}</p></div></div> : <EmptyState message="完成后会在这里留下记录。" />}</section>
+        <div className="detail-facts"><div><Clock3 /><span>{task.type === "recurring" ? "下一次应做" : isWeekOneOff(task) ? "完成周" : "截止日期"}</span><strong>{isWeekOneOff(task) ? formatWeekRange(task.dueDate) : formatShortDate(task.dueDate)}</strong></div><div><CircleUserRound /><span>负责人</span><strong>{task.assignee}</strong></div>{task.recurrence && <div><Repeat2 /><span>重复规则</span><strong>{task.recurrence}</strong></div>}</div>
+        {task.type === "recurring" && <section className="rhythm-card"><h3>这个事项的节奏</h3><div><p><span>上次完成</span><strong>{formatStoredMoment(task.lastCompleted, "还没有记录")}</strong></p><i /><p><span>下次应做</span><strong>{formatStoredMoment(task.nextDue ?? task.dueDate, "还没有安排")}</strong></p></div><small>下一次日期按实际完成日期加上原定周期计算。</small></section>}
+        <section className="history-section">
+          <div className="history-heading"><h3>完成历史</h3>{history.length > 0 && <span>{history.length} 条记录</span>}</div>
+          {visibleHistory.length ? <div className="history-list">{visibleHistory.map((record) => <div className="history-item" key={record.id}><span><Check /></span><div><strong>{formatDateTime(record.completedAt)} 完成</strong><p>{record.note || "没有添加备注"}</p></div></div>)}</div> : <EmptyState message="完成后会在这里留下记录。" />}
+          {historyPageCount > 1 && <div className="history-pagination"><button className="secondary-button" disabled={currentHistoryPage === 0} onClick={() => setHistoryPage((page) => Math.max(0, page - 1))}><ChevronLeft />上一页</button><span>{currentHistoryPage + 1} / {historyPageCount}</span><button className="secondary-button" disabled={currentHistoryPage >= historyPageCount - 1} onClick={() => setHistoryPage((page) => Math.min(historyPageCount - 1, page + 1))}>下一页<ChevronRight /></button></div>}
+        </section>
         <div className="detail-actions"><button className={task.status === "completed" ? "secondary-button wide" : "primary-button wide"} onClick={() => onToggle(task)}>{task.status === "completed" ? "撤销完成" : <><Check />标记完成</>}</button><button className="secondary-button wide" onClick={() => onEdit(task)}><Pencil />编辑家务</button><button className="danger-button wide" onClick={() => onDelete(task)}><Trash2 />删除家务</button></div>
       </aside>
     </div>

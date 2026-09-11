@@ -210,6 +210,14 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .list-summary strong { font-size: 12px; }
 .list-summary p span, .list-summary > span { color: var(--muted); font-size: 10px; }
 .catalog-list { display: grid; gap: 10px; }
+.one-off-sections { display: grid; gap: 34px; }
+.catalog-section { min-width: 0; }
+.catalog-section.completed-section { padding-top: 28px; border-top: 1px solid var(--line); }
+.catalog-section-heading { margin-bottom: 13px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.catalog-section-heading > div { display: flex; flex-direction: column; gap: 2px; }
+.catalog-section-heading h2 { margin: 0; font-size: 17px; }
+.catalog-section-heading p { margin: 0; color: var(--muted); font-size: 10px; }
+.catalog-section-heading > span { min-width: 28px; height: 28px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: 99px; color: var(--mauve-dark); background: var(--mauve-soft); font-size: 10px; font-weight: 800; }
 
 .connection-pill { padding: 8px 11px; display: inline-flex; align-items: center; gap: 6px; border-radius: 99px; font-size: 10px; font-weight: 800; }
 .connection-pill svg { width: 14px; }
@@ -369,6 +377,15 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .rhythm-card i { height: 1px; background: #d7bec9; }
 .rhythm-card small { margin-top: 10px; display: block; color: var(--muted); font-size: 9px; }
 .history-section { margin-top: 24px; }
+.history-heading { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.history-section .history-heading h3 { margin: 0; }
+.history-heading > span { color: var(--muted); font-size: 9px; }
+.history-list { display: grid; gap: 8px; }
+.history-pagination { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.history-pagination .secondary-button { min-height: 36px; padding: 0 11px; font-size: 10px; }
+.history-pagination .secondary-button:disabled { opacity: .45; cursor: default; }
+.history-pagination svg { width: 14px; }
+.history-pagination > span { color: var(--muted); font-size: 10px; font-weight: 750; }
 .history-item { padding: 13px; display: flex; gap: 10px; border: 1px solid var(--line); border-radius: 13px; }
 .history-item > span { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 9px; color: #377360; background: var(--mint); }
 .history-item svg { width: 14px; }

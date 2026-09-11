@@ -366,9 +366,8 @@ as $$
 declare
   anchor_date date;
   interval_count integer := greatest(coalesce((p_rule ->> 'interval')::integer, 1), 1);
-  keep_schedule boolean := coalesce((p_rule ->> 'keep_schedule')::boolean, false);
 begin
-  anchor_date := case when keep_schedule then p_current else (p_completed_at at time zone p_timezone)::date end;
+  anchor_date := (p_completed_at at time zone p_timezone)::date;
   case p_rule ->> 'kind'
     when 'daily' then return anchor_date + interval_count;
     when 'weekly' then return anchor_date + (interval_count * 7);

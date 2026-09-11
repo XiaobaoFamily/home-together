@@ -17,7 +17,7 @@ test("builds a GitHub Pages-ready Home Together application", async () => {
 });
 
 test("ships a subpath-safe installable PWA and Supabase security baseline", async () => {
-  const [manifestText, serviceWorker, schema, householdMigration, inviteMigration, taskMutationMigration, oneOffTimingMigration, completionTimeMigration, shoppingMigration, app, styles, tasks, shopping, workflow, pagesConfig, packageJson] = await Promise.all([
+  const [manifestText, serviceWorker, schema, householdMigration, inviteMigration, taskMutationMigration, oneOffTimingMigration, completionTimeMigration, shoppingMigration, recurrenceAnchorMigration, app, styles, tasks, shopping, workflow, pagesConfig, packageJson] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8"),
@@ -27,6 +27,7 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
     readFile(new URL("../supabase/migrations/202608170001_one_off_task_timing.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/202608180001_edit_completion_time.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/202608190001_shopping_lists.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/202609110001_anchor_recurrence_to_completion.sql", import.meta.url), "utf8"),
     readFile(new URL("../app/HomeTogetherApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/supabase/tasks.ts", import.meta.url), "utf8"),
@@ -112,6 +113,17 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
   assert.match(shoppingMigration, /enable row level security/);
   assert.match(shopping, /subscribeToShoppingLists/);
   assert.match(shopping, /clearShoppingListItems/);
+  assert.match(tasks, /completionHistory/);
+  assert.match(tasks, /historyByTemplate/);
+  assert.match(app, /recurringByTemplate/);
+  assert.match(app, /left\.dueDate\.localeCompare\(right\.dueDate\)/);
+  assert.match(app, /pendingOneOffTasks/);
+  assert.match(app, /completedOneOffTasks/);
+  assert.match(app, /history\.slice\(currentHistoryPage \* 5, currentHistoryPage \* 5 \+ 5\)/);
+  assert.match(app, /taskDisplayDate\(task\)/);
+  assert.match(recurrenceAnchorMigration, /anchor_date := \(p_completed_at at time zone p_timezone\)::date/);
+  assert.match(recurrenceAnchorMigration, /update public\.task_instances/);
+  assert.doesNotMatch(recurrenceAnchorMigration, /keep_schedule/);
   assert.match(schema, /create or replace function public\.complete_task/);
   assert.match(schema, /create or replace function public\.undo_task_completion/);
   await Promise.all([
