@@ -53,11 +53,15 @@ import {
 } from "@/lib/supabase/shopping";
 import {
   type AppTask,
+  type HouseholdEvent,
+  type HouseholdEventType,
   type HouseholdMember,
   type HouseholdSnapshot,
   completeTaskRecord,
+  createHouseholdEventRecord,
   createHousehold,
   createTaskRecord,
+  deleteHouseholdEventRecord,
   deleteTaskRecord,
   joinHousehold,
   loadHouseholdSnapshot,
@@ -67,7 +71,12 @@ import {
   updateTaskRecord,
 } from "@/lib/supabase/tasks";
 
-type ViewKey = "week" | "calendar" | "tasks" | "shopping";
+type ViewKey = "week" | "timeline" | "tasks" | "shopping";
+type TaskEditorMode = "all" | "recurring" | "one_off";
+type HouseholdEventDraft = Pick<
+  HouseholdEvent,
+  "type" | "title" | "description" | "occurredAt" | "amount" | "currency"
+>;
 
 const WEEK_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
@@ -142,6 +151,42 @@ const DEMO_SHOPPING_LISTS: ShoppingList[] = [
   { id: "shopping-costco", name: "Costco", sortOrder: 0, items: [] },
   { id: "shopping-hmart", name: "H-Mart", sortOrder: 1, items: [] },
   { id: "shopping-heb", name: "H-E-B", sortOrder: 2, items: [] },
+];
+
+const EVENT_TYPE_OPTIONS: Array<{
+  id: HouseholdEventType;
+  label: string;
+  hint: string;
+  icon: LucideIcon;
+}> = [
+  { id: "family", label: "家庭事项", hint: "共同决定、安排和生活记录", icon: ClipboardCheck },
+  { id: "environment", label: "居住环境", hint: "家具、布置和居住状态变化", icon: Home },
+  { id: "finance", label: "财务事项", hint: "账单、预算和较大收支", icon: Building2 },
+  { id: "maintenance", label: "维修维护", hint: "设备检修、保养和更换", icon: Wrench },
+  { id: "milestone", label: "家庭里程碑", hint: "值得一起记住的重要时刻", icon: Sparkles },
+];
+
+const DEMO_EVENTS: HouseholdEvent[] = [
+  {
+    id: "event-demo-1",
+    type: "environment",
+    title: "客厅换了新的落地灯",
+    description: "晚上的阅读光线舒服了很多。",
+    occurredAt: `${DEMO_WEEK[1]}T20:10:00-05:00`,
+    currency: "USD",
+    createdBy: "nicole",
+    createdByName: "Nicole",
+  },
+  {
+    id: "event-demo-2",
+    type: "finance",
+    title: "缴纳本月电费",
+    occurredAt: `${DEMO_WEEK[0]}T11:20:00-05:00`,
+    amount: 86.42,
+    currency: "USD",
+    createdBy: "partner",
+    createdByName: "伴侣",
+  },
 ];
 
 const DEMO_TASKS: AppTask[] = [
@@ -292,8 +337,8 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
 
 const NAV_ITEMS: Array<{ id: ViewKey; label: string; icon: LucideIcon }> = [
   { id: "week", label: "本周", icon: Home },
-  { id: "calendar", label: "月历", icon: CalendarDays },
-  { id: "tasks", label: "全部事项", icon: LayoutList },
+  { id: "timeline", label: "时间轴", icon: Clock3 },
+  { id: "tasks", label: "周期家务", icon: LayoutList },
   { id: "shopping", label: "买菜单", icon: ShoppingCart },
 ];
 
@@ -339,12 +384,6 @@ function formatStoredMoment(value: string | undefined, fallback: string) {
 function toDateTimeLocal(value: string) {
   const date = new Date(value);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-
-function addMonths(monthPrefix: string, amount: number) {
-  const [year, month] = monthPrefix.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1 + amount, 1));
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function initials(name: string) {
@@ -407,11 +446,6 @@ function taskStatusText(task: AppTask) {
   if (isDeadlineOneOff(task) && task.dueDate === DEMO_TODAY) return "今天截止";
   if (task.dueDate === DEMO_TODAY) return "今天";
   return "待办";
-}
-
-function wasCompletedOnTime(task: AppTask) {
-  const completedDate = task.completedAt ? completionDateKey(task.completedAt) : undefined;
-  return Boolean(completedDate && completedDate <= taskWindowEnd(task));
 }
 
 export function HomeTogetherApp() {
@@ -679,15 +713,18 @@ function AppShell({
   const householdId = snapshot?.householdId;
   const [view, setView] = useState<ViewKey>("week");
   const [tasks, setTasks] = useState<AppTask[]>(isDemo ? DEMO_TASKS : snapshot?.tasks ?? []);
+  const [events, setEvents] = useState<HouseholdEvent[]>(isDemo ? DEMO_EVENTS : snapshot?.events ?? []);
   const [shoppingLists, setShoppingLists] = useState<ShoppingList[]>(
     isDemo ? DEMO_SHOPPING_LISTS.map((list) => ({ ...list, items: [...list.items] })) : [],
   );
   const [shoppingError, setShoppingError] = useState("");
-  const [showAdd, setShowAdd] = useState(false);
+  const [taskEditorMode, setTaskEditorMode] = useState<TaskEditorMode | null>(null);
+  const [showEventAdd, setShowEventAdd] = useState(false);
   const [noteTarget, setNoteTarget] = useState<AppTask | null>(null);
   const [detailTarget, setDetailTarget] = useState<AppTask | null>(null);
   const [editTarget, setEditTarget] = useState<AppTask | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AppTask | null>(null);
+  const [eventDeleteTarget, setEventDeleteTarget] = useState<HouseholdEvent | null>(null);
   const [toast, setToast] = useState("");
 
   const refreshShopping = useCallback(async () => {
@@ -697,11 +734,22 @@ function AppShell({
     setShoppingError("");
   }, [isDemo, householdId]);
 
-  useOverlayScrollLock(Boolean(showAdd || noteTarget || detailTarget || editTarget || deleteTarget));
+  useOverlayScrollLock(Boolean(
+    taskEditorMode
+    || showEventAdd
+    || noteTarget
+    || detailTarget
+    || editTarget
+    || deleteTarget
+    || eventDeleteTarget,
+  ));
 
   useEffect(() => {
     if (isDemo || !snapshot) return;
-    const timer = window.setTimeout(() => setTasks(snapshot.tasks), 0);
+    const timer = window.setTimeout(() => {
+      setTasks(snapshot.tasks);
+      setEvents(snapshot.events);
+    }, 0);
     return () => window.clearTimeout(timer);
   }, [isDemo, snapshot]);
   useEffect(() => {
@@ -769,7 +817,7 @@ function AppShell({
 
   async function addTask(task: AppTask) {
     setTasks((current) => [...current, task]);
-    setShowAdd(false);
+    setTaskEditorMode(null);
     setToast("新事项已加入，一起慢慢完成 🌿");
     if (!isDemo && snapshot) {
       try {
@@ -830,6 +878,46 @@ function AppShell({
       } catch (caught) {
         setTasks(previousTasks);
         setToast(formatAppError(caught, "删除失败，家务已恢复"));
+      }
+    }
+  }
+
+  async function addEvent(draft: HouseholdEventDraft) {
+    const currentMember = members.find((member) => member.id === currentUserId);
+    const event: HouseholdEvent = {
+      ...draft,
+      id: `event-${Date.now()}`,
+      createdBy: currentUserId ?? "demo",
+      createdByName: currentMember?.displayName ?? "家庭成员",
+    };
+    setEvents((current) => [event, ...current]);
+    setShowEventAdd(false);
+    setToast("家庭事件已记录到时间轴");
+
+    if (!isDemo && householdId) {
+      try {
+        await createHouseholdEventRecord(householdId, draft);
+        await refresh();
+      } catch (caught) {
+        setEvents((current) => current.filter((item) => item.id !== event.id));
+        setToast(formatAppError(caught, "事件记录失败，请重试"));
+      }
+    }
+  }
+
+  async function deleteEvent(event: HouseholdEvent) {
+    const previousEvents = events;
+    setEvents((current) => current.filter((item) => item.id !== event.id));
+    setEventDeleteTarget(null);
+    setToast("时间轴记录已删除");
+
+    if (!isDemo) {
+      try {
+        await deleteHouseholdEventRecord(event.id);
+        await refresh();
+      } catch (caught) {
+        setEvents(previousEvents);
+        setToast(formatAppError(caught, "删除失败，事件已恢复"));
       }
     }
   }
@@ -969,7 +1057,7 @@ function AppShell({
         </nav>
         <div className="sidebar-home-card">
           <span className="mini-home"><Home /></span>
-          <div><strong>本周一起完成</strong><span>{tasks.filter((task) => task.status === "completed" && DEMO_WEEK.includes(task.dueDate)).length} 件事</span></div>
+          <div><strong>本周一起完成</strong><span>{tasks.filter((task) => task.status === "completed" && DEMO_WEEK.includes(taskDisplayDate(task))).length} 件事</span></div>
           <Heart className="soft-heart" />
         </div>
         <div className="sidebar-members"><Avatar name={members[0]?.displayName ?? "我"} /><Avatar name={members[1]?.displayName ?? "伴侣"} /><span>共享同一份清单</span></div>
@@ -980,9 +1068,9 @@ function AppShell({
           <div className="brand-lockup compact"><BrandMark /><div><strong>HOME TOGETHER</strong><span>{householdName}</span></div></div>
         </header>
         {(loadError || shoppingError) && <div className="inline-alert">{loadError || shoppingError}</div>}
-        {view === "week" && <WeekView tasks={tasks} members={members} onToggle={toggleTask} onOpen={setDetailTarget} onAdd={() => setShowAdd(true)} />}
-        {view === "calendar" && <CalendarView tasks={tasks} members={members} onOpen={setDetailTarget} />}
-        {view === "tasks" && <AllTasksView tasks={tasks} onToggle={toggleTask} onOpen={setDetailTarget} onAdd={() => setShowAdd(true)} />}
+        {view === "week" && <WeekView tasks={tasks} members={members} onToggle={toggleTask} onOpen={setDetailTarget} onAdd={() => setTaskEditorMode("all")} />}
+        {view === "timeline" && <TimelineView tasks={tasks} events={events} onToggle={toggleTask} onOpenTask={setDetailTarget} onAddOneOff={() => setTaskEditorMode("one_off")} onAddEvent={() => setShowEventAdd(true)} onDeleteEvent={setEventDeleteTarget} />}
+        {view === "tasks" && <RecurringTasksView tasks={tasks} onToggle={toggleTask} onOpen={setDetailTarget} onAdd={() => setTaskEditorMode("recurring")} />}
         {view === "shopping" && <ShoppingView lists={shoppingLists} onAddList={addShoppingList} onAddItem={addShoppingItem} onToggleItem={toggleShoppingItem} onDeleteItem={deleteShoppingItem} onClearList={clearShoppingList} />}
       </main>
 
@@ -992,12 +1080,23 @@ function AppShell({
         ))}
       </nav>
 
-      {view !== "shopping" && <button className="floating-add" onClick={() => setShowAdd(true)} aria-label="添加事项"><Plus /></button>}
-      {showAdd && <TaskEditorModal members={members} onClose={() => setShowAdd(false)} onSave={addTask} />}
+      {view !== "shopping" && <button className="floating-add" onClick={() => {
+        if (view === "timeline") setShowEventAdd(true);
+        else setTaskEditorMode(view === "tasks" ? "recurring" : "all");
+      }} aria-label={view === "timeline" ? "记录家庭事件" : "添加事项"}><Plus /></button>}
+      {taskEditorMode && <TaskEditorModal
+        members={members}
+        defaultType={taskEditorMode === "all" ? undefined : taskEditorMode}
+        lockType={taskEditorMode !== "all"}
+        onClose={() => setTaskEditorMode(null)}
+        onSave={addTask}
+      />}
+      {showEventAdd && <EventEditorModal onClose={() => setShowEventAdd(false)} onSave={addEvent} />}
       {noteTarget && <CompletionSheet task={noteTarget} onClose={() => setNoteTarget(null)} onSave={saveNote} />}
       {detailTarget && <TaskDetail task={tasks.find((task) => task.id === detailTarget.id) ?? detailTarget} onClose={() => setDetailTarget(null)} onToggle={(task) => { setDetailTarget(null); void toggleTask(task); }} onEdit={(task) => { setDetailTarget(null); setEditTarget(task); }} onDelete={(task) => { setDetailTarget(null); setDeleteTarget(task); }} />}
       {editTarget && <TaskEditorModal initialTask={editTarget} members={members} onClose={() => setEditTarget(null)} onSave={editTask} />}
       {deleteTarget && <DeleteTaskDialog task={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={deleteTask} />}
+      {eventDeleteTarget && <DeleteEventDialog event={eventDeleteTarget} onClose={() => setEventDeleteTarget(null)} onConfirm={deleteEvent} />}
       {toast && <div className="toast" role="status"><Check />{toast}</div>}
     </div>
   );
@@ -1099,61 +1198,110 @@ function TaskRow({ task, onToggle, onOpen, compact = false }: { task: AppTask; o
   );
 }
 
-function CalendarView({ tasks, members, onOpen }: { tasks: AppTask[]; members: HouseholdMember[]; onOpen: (task: AppTask) => void }) {
-  const [selectedDate, setSelectedDate] = useState(DEMO_TODAY);
-  const [visibleMonth, setVisibleMonth] = useState(DEMO_TODAY.slice(0, 7));
-  const [memberFilter, setMemberFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("全部类型");
-  const filtered = tasks.filter((task) => (memberFilter === "all" || task.assigneeId === memberFilter || task.assigneeMode === "shared") && (typeFilter === "全部类型" || (typeFilter === "周期家务" ? task.type === "recurring" : task.type === "one_off")));
-  const monthPrefix = visibleMonth;
-  const [year, month] = monthPrefix.split("-").map(Number);
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const firstWeekday = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
-  const calendarCellCount = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
-  const monthTasks = filtered.filter((task) => taskDisplayDate(task).startsWith(monthPrefix));
-  const days = Array.from({ length: calendarCellCount }, (_, index) => index - firstWeekday + 1).map((day) => day > 0 && day <= daysInMonth ? `${monthPrefix}-${String(day).padStart(2, "0")}` : null);
-  const selectedTasks = filtered.filter((task) => taskDisplayDate(task) === selectedDate);
-  const completed = monthTasks.filter((task) => task.status === "completed").length;
-  const overdue = monthTasks.filter(isOverdue).length;
+type TimelineItem =
+  | { kind: "task"; id: string; timestamp: string; task: AppTask }
+  | { kind: "event"; id: string; timestamp: string; event: HouseholdEvent };
 
-  function changeMonth(amount: number) {
-    const nextMonth = addMonths(visibleMonth, amount);
-    setVisibleMonth(nextMonth);
-    setSelectedDate(nextMonth === DEMO_TODAY.slice(0, 7) ? DEMO_TODAY : `${nextMonth}-01`);
-  }
+function TimelineDate({ value }: { value: string }) {
+  const date = new Date(value);
+  const month = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "America/Chicago",
+    month: "short",
+  }).format(date);
+  const day = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "America/Chicago",
+    day: "numeric",
+  }).format(date);
+  const weekday = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "America/Chicago",
+    weekday: "short",
+  }).format(date);
+  return <time dateTime={value} className="timeline-date"><span>{month}</span><strong>{day}</strong><em>{weekday}</em></time>;
+}
 
-  function returnToCurrentMonth() {
-    setVisibleMonth(DEMO_TODAY.slice(0, 7));
-    setSelectedDate(DEMO_TODAY);
+function TimelineView({
+  tasks,
+  events,
+  onToggle,
+  onOpenTask,
+  onAddOneOff,
+  onAddEvent,
+  onDeleteEvent,
+}: {
+  tasks: AppTask[];
+  events: HouseholdEvent[];
+  onToggle: (task: AppTask) => void;
+  onOpenTask: (task: AppTask) => void;
+  onAddOneOff: () => void;
+  onAddEvent: () => void;
+  onDeleteEvent: (event: HouseholdEvent) => void;
+}) {
+  const reminders = tasks
+    .filter((task) => task.type === "one_off" && task.status !== "completed")
+    .sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.title.localeCompare(right.title, "zh-CN"));
+  const timelineItems: TimelineItem[] = [];
+
+  for (const task of tasks) {
+    if (task.type === "one_off" && task.status === "completed" && task.completedAt) {
+      timelineItems.push({ kind: "task", id: task.id, timestamp: task.completedAt, task });
+    }
   }
+  for (const event of events) {
+    timelineItems.push({ kind: "event", id: event.id, timestamp: event.occurredAt, event });
+  }
+  timelineItems.sort((left, right) => right.timestamp.localeCompare(left.timestamp));
 
   return (
-    <div className="page-shell calendar-page">
-      <section className="page-heading"><div><p className="eyebrow">家庭回顾</p><h1>月历</h1><p className="heading-copy">看看这个月，家里发生了哪些小小的完成。</p></div><div className="heading-actions"><button className="icon-button" aria-label="上一月" onClick={() => changeMonth(-1)}><ChevronLeft /></button><button className="subtle-button" onClick={returnToCurrentMonth} title="回到本月">{year} 年 {month} 月</button><button className="icon-button" aria-label="下一月" onClick={() => changeMonth(1)}><ChevronRight /></button></div></section>
-      <section className="month-stats"><div><span className="stat-icon mint"><Check /></span><p><strong>{completed}</strong><span>已完成</span></p></div><div><span className="stat-icon lavender"><Clock3 /></span><p><strong>{Math.max(0, completed - 1)}</strong><span>按时完成</span></p></div><div><span className="stat-icon coral"><Bell /></span><p><strong>{overdue}</strong><span>待补上</span></p></div></section>
-      <section className="calendar-toolbar"><div className="filter-group"><select value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)} aria-label="按成员筛选"><option value="all">全部成员</option>{members.map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} aria-label="按类型筛选"><option>全部类型</option><option>周期家务</option><option>一次性家事</option></select></div><div className="calendar-legend"><span><i className="mint" />完成</span><span><i className="mauve" />待办</span><span><i className="coral" />逾期</span></div></section>
-      <div className="calendar-layout">
-        <section className="calendar-card">
-          <div className="calendar-weekdays">{WEEK_LABELS.map((day) => <span key={day}>{day}</span>)}</div>
-          <div className="calendar-grid">
-            {days.map((date, index) => {
-              if (!date) return <span className="calendar-day outside" key={`outside-${index}`} />;
-              const dateTasks = filtered.filter((task) => taskDisplayDate(task) === date);
-              return <button key={date} className={`calendar-day ${date === selectedDate ? "selected" : ""} ${date === DEMO_TODAY ? "today" : ""}`} onClick={() => setSelectedDate(date)}><span>{Number(date.slice(-2))}</span><div className="date-dots">{dateTasks.slice(0, 3).map((task) => <i key={task.id} className={taskStatus(task) === "completed" ? "mint" : taskStatus(task) === "overdue" ? "coral" : "mauve"} />)}</div></button>;
-            })}
-          </div>
-        </section>
-        <aside className="date-drawer"><div className="drawer-date"><span>{month} 月</span><strong>{Number(selectedDate.slice(-2))}</strong><em>{selectedDate === DEMO_TODAY ? "今天" : WEEK_LABELS[(new Date(`${selectedDate}T12:00:00`).getDay() + 6) % 7]}</em></div><div className="drawer-section-title"><h2>这一天的家事</h2><span>{selectedTasks.length}</span></div><div className="drawer-tasks">{selectedTasks.length ? selectedTasks.map((task) => <button key={task.id} onClick={() => onOpen(task)}><span className={`drawer-status ${taskStatus(task)}`}><Check /></span><div><strong>{task.title}</strong><span>{task.status === "completed" ? wasCompletedOnTime(task) ? "按时完成" : "补做完成" : taskStatusText(task)}</span>{task.note && <small>{task.note}</small>}</div></button>) : <EmptyState message="这一天没有安排，留给生活一点空白。" />}</div></aside>
-      </div>
+    <div className="page-shell timeline-page">
+      <section className="page-heading">
+        <div><p className="eyebrow">家的记忆</p><h1>家庭时间轴</h1><p className="heading-copy">完成的小事和家里的变化，会一起留在这里。</p></div>
+        <div className="heading-actions timeline-actions"><button className="secondary-button" onClick={onAddOneOff}><Bell />添加提醒</button><button className="primary-button" onClick={onAddEvent}><Plus />记录事件</button></div>
+      </section>
+
+      <section className="timeline-reminders">
+        <div className="timeline-section-heading"><div><span className="timeline-heading-icon"><Bell /></span><p><strong>一次性家务提醒</strong><span>只显示尚未完成的事项，按日期从早到晚排列。</span></p></div><span>{reminders.length}</span></div>
+        <div className="timeline-reminder-list">{reminders.length ? reminders.map((task) => <TaskRow key={task.id} task={task} compact onToggle={onToggle} onOpen={onOpenTask} />) : <EmptyState message="没有未完成的一次性家务，时间可以留给生活。" />}</div>
+      </section>
+
+      <section className="timeline-history">
+        <div className="timeline-section-heading history"><div><span className="timeline-heading-icon"><Clock3 /></span><p><strong>家庭记录</strong><span>已完成的一次性家事与手动记录的家庭事件。</span></p></div><span>{timelineItems.length}</span></div>
+        {timelineItems.length ? <div className="timeline-list">{timelineItems.map((item) => {
+          if (item.kind === "task") {
+            return (
+              <article className="timeline-entry completed-task-entry" key={"task-" + item.id}>
+                <TimelineDate value={item.timestamp} />
+                <span className="timeline-rail"><i /></span>
+                <button className="timeline-card" onClick={() => onOpenTask(item.task)}>
+                  <span className="timeline-card-icon completed"><Check /></span>
+                  <span className="timeline-card-copy"><span className="timeline-kind">已完成的一次性家事</span><strong>{item.task.title}</strong><small>{formatDateTime(item.timestamp)} · {item.task.assignee}</small>{item.task.note && <em>{item.task.note}</em>}</span>
+                  <MoreHorizontal />
+                </button>
+              </article>
+            );
+          }
+
+          const option = EVENT_TYPE_OPTIONS.find((entry) => entry.id === item.event.type) ?? EVENT_TYPE_OPTIONS[0];
+          const Icon = option.icon;
+          return (
+            <article className={"timeline-entry event-entry " + item.event.type} key={"event-" + item.id}>
+              <TimelineDate value={item.timestamp} />
+              <span className="timeline-rail"><i /></span>
+              <div className="timeline-card">
+                <span className="timeline-card-icon event"><Icon /></span>
+                <span className="timeline-card-copy"><span className="timeline-kind">{option.label}</span><strong>{item.event.title}</strong><small>{formatDateTime(item.timestamp)} · {item.event.createdByName}</small>{item.event.description && <em>{item.event.description}</em>}{item.event.amount !== undefined && <b>{new Intl.NumberFormat("en-US", { style: "currency", currency: item.event.currency }).format(item.event.amount)}</b>}</span>
+                <button className="timeline-delete" onClick={() => onDeleteEvent(item.event)} aria-label={"删除 " + item.event.title}><Trash2 /></button>
+              </div>
+            </article>
+          );
+        })}</div> : <EmptyState message="时间轴还是空的。完成一次性家务，或记录一件家里发生的事吧。" />}
+      </section>
     </div>
   );
 }
 
-function AllTasksView({ tasks, onToggle, onOpen, onAdd }: { tasks: AppTask[]; onToggle: (task: AppTask) => void; onOpen: (task: AppTask) => void; onAdd: () => void }) {
-  const [tab, setTab] = useState<"recurring" | "one_off" | "archived">("recurring");
+function RecurringTasksView({ tasks, onToggle, onOpen, onAdd }: { tasks: AppTask[]; onToggle: (task: AppTask) => void; onOpen: (task: AppTask) => void; onAdd: () => void }) {
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const matchesQuery = (task: AppTask) => task.title.toLocaleLowerCase().includes(normalizedQuery);
   const recurringByTemplate = new Map<string, AppTask>();
 
   for (const task of tasks.filter((item) => item.type === "recurring")) {
@@ -1168,38 +1316,15 @@ function AllTasksView({ tasks, onToggle, onOpen, onAdd }: { tasks: AppTask[]; on
   }
 
   const recurringTasks = [...recurringByTemplate.values()]
-    .filter(matchesQuery)
+    .filter((task) => task.title.toLocaleLowerCase().includes(normalizedQuery))
     .sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.title.localeCompare(right.title, "zh-CN"));
-  const oneOffTasks = tasks.filter((task) => task.type === "one_off" && matchesQuery(task));
-  const pendingOneOffTasks = oneOffTasks
-    .filter((task) => task.status !== "completed")
-    .sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.title.localeCompare(right.title, "zh-CN"));
-  const completedOneOffTasks = oneOffTasks
-    .filter((task) => task.status === "completed")
-    .sort((left, right) => (right.completedAt ?? right.dueDate).localeCompare(left.completedAt ?? left.dueDate));
 
   return (
-    <div className="page-shell all-tasks-page">
-      <section className="page-heading"><div><p className="eyebrow">家庭清单</p><h1>全部事项</h1><p className="heading-copy">长期节奏和临时小事，都在这里看得清楚。</p></div><button className="primary-button" onClick={onAdd}><Plus />添加事项</button></section>
-      <div className="task-tools"><div className="segmented-control tabs"><button className={tab === "recurring" ? "active" : ""} onClick={() => setTab("recurring")}>周期家务 <span>{recurringByTemplate.size}</span></button><button className={tab === "one_off" ? "active" : ""} onClick={() => setTab("one_off")}>一次性家事 <span>{tasks.filter((task) => task.type === "one_off").length}</span></button><button className={tab === "archived" ? "active" : ""} onClick={() => setTab("archived")}>已归档</button></div><label className="search-box"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索事项" /><span className="sr-only">搜索事项</span></label></div>
-
-      {tab === "recurring" && <>
-        <div className="list-summary"><div><Repeat2 /><p><strong>按照下一次应做日期排列</strong><span>已经晚了的事项会排在最前面；完成历史请点进事项查看。</span></p></div><span>{recurringTasks.length} 项周期安排</span></div>
-        <section className="catalog-list">{recurringTasks.length ? recurringTasks.map((task) => <TaskRow key={task.templateId ?? task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="没有找到符合条件的周期家务。" />}</section>
-      </>}
-
-      {tab === "one_off" && <div className="one-off-sections">
-        <section className="catalog-section">
-          <div className="catalog-section-heading"><div><h2>未完成</h2><p>按需要完成的日期从早到晚排列</p></div><span>{pendingOneOffTasks.length}</span></div>
-          <div className="catalog-list">{pendingOneOffTasks.length ? pendingOneOffTasks.map((task) => <TaskRow key={task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="没有未完成的一次性家事。" />}</div>
-        </section>
-        <section className="catalog-section completed-section">
-          <div className="catalog-section-heading"><div><h2>已完成</h2><p>按实际完成时间从晚到早排列</p></div><span>{completedOneOffTasks.length}</span></div>
-          <div className="catalog-list">{completedOneOffTasks.length ? completedOneOffTasks.map((task) => <TaskRow key={task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="还没有已完成的一次性家事。" />}</div>
-        </section>
-      </div>}
-
-      {tab === "archived" && <section className="catalog-list"><EmptyState message="这里还没有归档事项。" /></section>}
+    <div className="page-shell recurring-tasks-page">
+      <section className="page-heading"><div><p className="eyebrow">家的节奏</p><h1>周期家务</h1><p className="heading-copy">这里只保留会重复发生的家务，按下一次应做日期排列。</p></div><button className="primary-button" onClick={onAdd}><Plus />添加周期家务</button></section>
+      <div className="task-tools"><div className="recurring-count"><Repeat2 /><span><strong>{recurringByTemplate.size}</strong> 项周期安排</span></div><label className="search-box"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索周期家务" /><span className="sr-only">搜索周期家务</span></label></div>
+      <div className="list-summary"><div><Repeat2 /><p><strong>按照下一次应做日期排列</strong><span>已经晚了的事项会排在最前面；完成历史请点进事项查看。</span></p></div><span>{recurringTasks.length} 项</span></div>
+      <section className="catalog-list">{recurringTasks.length ? recurringTasks.map((task) => <TaskRow key={task.templateId ?? task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="没有找到符合条件的周期家务。" />}</section>
     </div>
   );
 }
@@ -1328,10 +1453,24 @@ function ShoppingView({
   );
 }
 
-function TaskEditorModal({ initialTask, members, onClose, onSave }: { initialTask?: AppTask; members: HouseholdMember[]; onClose: () => void; onSave: (task: AppTask) => void }) {
+function TaskEditorModal({
+  initialTask,
+  members,
+  defaultType,
+  lockType = false,
+  onClose,
+  onSave,
+}: {
+  initialTask?: AppTask;
+  members: HouseholdMember[];
+  defaultType?: AppTask["type"];
+  lockType?: boolean;
+  onClose: () => void;
+  onSave: (task: AppTask) => void;
+}) {
   const initialKind = initialTask?.recurrenceRule?.kind;
   const [title, setTitle] = useState(initialTask?.title ?? "");
-  const [type, setType] = useState<AppTask["type"]>(initialTask?.type ?? "one_off");
+  const [type, setType] = useState<AppTask["type"]>(initialTask?.type ?? defaultType ?? "one_off");
   const [oneOffTiming, setOneOffTiming] = useState<"week" | "deadline">(
     initialTask?.oneOffTiming === "deadline" ? "deadline" : "week",
   );
@@ -1387,15 +1526,57 @@ function TaskEditorModal({ initialTask, members, onClose, onSave }: { initialTas
   return (
     <div className="modal-backdrop">
       <section className="modal-card add-modal" role="dialog" aria-modal="true" aria-labelledby="add-title">
-        <div className="modal-heading"><div><span className="modal-icon">{editing ? <Pencil /> : <Plus />}</span><div><p>{editing ? "编辑家务" : "快速添加"}</p><h2 id="add-title">{editing ? "调整这件家务" : "家里有什么要做？"}</h2></div></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X /></button></div>
+        <div className="modal-heading"><div><span className="modal-icon">{editing ? <Pencil /> : <Plus />}</span><div><p>{editing ? "编辑家务" : "快速添加"}</p><h2 id="add-title">{editing ? "调整这件家务" : defaultType === "recurring" ? "添加周期家务" : defaultType === "one_off" ? "添加一次性家务" : "家里有什么要做？"}</h2></div></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X /></button></div>
         <form onSubmit={submit}>
           <label className="field"><span>事项名称</span><input required maxLength={80} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：联系物业" /></label>
-          <div className="field"><span>类型</span><div className="type-picker"><button type="button" className={type === "one_off" ? "active" : ""} onClick={() => setType("one_off")}><ClipboardCheck />一次性家事<small>完成后不再重复</small></button><button type="button" className={type === "recurring" ? "active" : ""} onClick={() => setType("recurring")}><Repeat2 />周期家务<small>按节奏自动出现</small></button></div></div>
+          {!lockType && <div className="field"><span>类型</span><div className="type-picker"><button type="button" className={type === "one_off" ? "active" : ""} onClick={() => setType("one_off")}><ClipboardCheck />一次性家事<small>完成后不再重复</small></button><button type="button" className={type === "recurring" ? "active" : ""} onClick={() => setType("recurring")}><Repeat2 />周期家务<small>按节奏自动出现</small></button></div></div>}
           {type === "one_off" && <div className="field"><span>完成方式</span><div className="type-picker timing-picker"><button type="button" className={oneOffTiming === "week" ? "active" : ""} onClick={() => setOneOffTiming("week")}><CalendarDays />按周完成<small>在选定的一周内完成即可</small></button><button type="button" className={oneOffTiming === "deadline" ? "active" : ""} onClick={() => setOneOffTiming("deadline")}><Bell />截止日期<small>必须在指定日期前完成</small></button></div></div>}
           <div className="form-grid"><label className="field"><span>{type === "recurring" ? "首次计划日期" : oneOffTiming === "week" ? "选择所在周" : "截止日期"}</span><span className="native-date-control"><input type="date" required value={date} onChange={(event) => setDate(event.target.value)} /></span>{type === "one_off" && oneOffTiming === "week" && <small className="week-preview">将作为 {formatWeekRange(mondayWeek(date)[0])} 的本周事项</small>}</label><label className="field"><span>负责人</span><select value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="shared">共同</option>{members.map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}<option value="unassigned">未分配</option></select></label></div>
           {initialTask?.status === "completed" && <label className="field"><span>实际完成时间</span><span className="native-date-control"><input type="datetime-local" required max={toDateTimeLocal(new Date().toISOString())} value={completedAt} onChange={(event) => setCompletedAt(event.target.value)} /></span><small className="week-preview">修改后，周期家务的下一次计划日期会同步重新计算。</small></label>}
           {type === "recurring" && <label className="field recurrence-field"><span>重复节奏</span><div><span>每</span><input type="number" min={1} max={365} value={interval} onChange={(event) => setInterval(Number(event.target.value))} /><select aria-label="重复周期单位" value={recurrenceKind} onChange={(event) => setRecurrenceKind(event.target.value as RecurrenceKind)}><option value="interval_days">天</option><option value="weekly">周</option><option value="monthly">月</option></select></div><small>默认从实际完成日重新计算下一次。</small></label>}
           <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button">{editing ? <Pencil /> : <Plus />}{editing ? "保存修改" : "加入清单"}</button></div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function EventEditorModal({ onClose, onSave }: { onClose: () => void; onSave: (event: HouseholdEventDraft) => void }) {
+  const [type, setType] = useState<HouseholdEventType>("family");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [occurredAt, setOccurredAt] = useState(toDateTimeLocal(new Date().toISOString()));
+  const [amount, setAmount] = useState("");
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const parsedAmount = amount.trim() ? Number(amount) : undefined;
+    onSave({
+      type,
+      title: title.trim(),
+      description: description.trim() || undefined,
+      occurredAt: new Date(occurredAt).toISOString(),
+      amount: type === "finance" && parsedAmount !== undefined && Number.isFinite(parsedAmount)
+        ? parsedAmount
+        : undefined,
+      currency: "USD",
+    });
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <section className="modal-card add-modal event-modal" role="dialog" aria-modal="true" aria-labelledby="event-title">
+        <div className="modal-heading"><div><span className="modal-icon"><Sparkles /></span><div><p>家庭记录</p><h2 id="event-title">记录一件家里的事</h2></div></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X /></button></div>
+        <form onSubmit={submit}>
+          <div className="field"><span>事件类型</span><div className="event-type-picker">{EVENT_TYPE_OPTIONS.map((option) => {
+            const Icon = option.icon;
+            return <button key={option.id} type="button" className={type === option.id ? "active" : ""} onClick={() => setType(option.id)}><Icon /><span>{option.label}</span><small>{option.hint}</small></button>;
+          })}</div></div>
+          <label className="field"><span>标题</span><input required maxLength={100} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：客厅换了新的落地灯" /></label>
+          <label className="field"><span>发生时间</span><span className="native-date-control"><input type="datetime-local" required max={toDateTimeLocal(new Date().toISOString())} value={occurredAt} onChange={(event) => setOccurredAt(event.target.value)} /></span></label>
+          {type === "finance" && <label className="field"><span>金额（可选，USD）</span><input type="number" min={0} step="0.01" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" /></label>}
+          <label className="field"><span>补充说明（可选）</span><textarea maxLength={1000} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="记录背景、变化或想一起记住的细节" /></label>
+          <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button"><Plus />记录到时间轴</button></div>
         </form>
       </section>
     </div>
@@ -1457,6 +1638,19 @@ function DeleteTaskDialog({ task, onClose, onConfirm }: { task: AppTask; onClose
         <h2 id="delete-title">删除“{task.title}”？</h2>
         <p id="delete-description">这会删除这项家务的安排和全部完成记录，删除后无法恢复。</p>
         <div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="danger-button" onClick={() => onConfirm(task)}><Trash2 />确认删除</button></div>
+      </section>
+    </div>
+  );
+}
+
+function DeleteEventDialog({ event, onClose, onConfirm }: { event: HouseholdEvent; onClose: () => void; onConfirm: (event: HouseholdEvent) => void }) {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal-card delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-event-title" aria-describedby="delete-event-description">
+        <span className="delete-icon"><Trash2 /></span>
+        <h2 id="delete-event-title">删除“{event.title}”？</h2>
+        <p id="delete-event-description">这条家庭事件会从时间轴中移除，删除后无法恢复。</p>
+        <div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="danger-button" onClick={() => onConfirm(event)}><Trash2 />确认删除</button></div>
       </section>
     </div>
   );

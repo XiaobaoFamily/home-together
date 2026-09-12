@@ -17,7 +17,7 @@ test("builds a GitHub Pages-ready Home Together application", async () => {
 });
 
 test("ships a subpath-safe installable PWA and Supabase security baseline", async () => {
-  const [manifestText, serviceWorker, schema, householdMigration, inviteMigration, taskMutationMigration, oneOffTimingMigration, completionTimeMigration, shoppingMigration, recurrenceAnchorMigration, app, styles, tasks, shopping, workflow, pagesConfig, packageJson] = await Promise.all([
+  const [manifestText, serviceWorker, schema, householdMigration, inviteMigration, taskMutationMigration, oneOffTimingMigration, completionTimeMigration, shoppingMigration, recurrenceAnchorMigration, eventMigration, app, styles, tasks, shopping, workflow, pagesConfig, packageJson] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8"),
@@ -28,6 +28,7 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
     readFile(new URL("../supabase/migrations/202608180001_edit_completion_time.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/202608190001_shopping_lists.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/202609110001_anchor_recurrence_to_completion.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/202609120001_household_events_timeline.sql", import.meta.url), "utf8"),
     readFile(new URL("../app/HomeTogetherApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/supabase/tasks.ts", import.meta.url), "utf8"),
@@ -78,9 +79,15 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
   assert.match(app, /task\.type === "recurring" && task\.status === "pending"/);
   assert.match(app, /setWeekStartDate\(\(current\) => addDays\(current, -7\)\)/);
   assert.match(app, /setWeekStartDate\(\(current\) => addDays\(current, 7\)\)/);
-  assert.match(app, /function changeMonth\(amount: number\)/);
-  assert.match(app, /aria-label="上一月"/);
-  assert.match(app, /aria-label="下一月"/);
+  assert.match(app, /id: "timeline", label: "时间轴"/);
+  assert.doesNotMatch(app, /id: "calendar"/);
+  assert.match(app, /function TimelineView/);
+  assert.match(app, /task\.type === "one_off" && task\.status !== "completed"/);
+  assert.match(app, /task\.type === "one_off" && task\.status === "completed"/);
+  assert.match(app, /function RecurringTasksView/);
+  assert.doesNotMatch(app, /function AllTasksView/);
+  assert.doesNotMatch(app, /function CalendarView/);
+  assert.match(app, /lockType=\{taskEditorMode !== "all"\}/);
   assert.match(app, /按周完成/);
   assert.match(app, /截止日期/);
   assert.match(app, /实际完成时间/);
@@ -117,8 +124,23 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
   assert.match(tasks, /historyByTemplate/);
   assert.match(app, /recurringByTemplate/);
   assert.match(app, /left\.dueDate\.localeCompare\(right\.dueDate\)/);
-  assert.match(app, /pendingOneOffTasks/);
-  assert.match(app, /completedOneOffTasks/);
+  assert.match(app, /家庭事项/);
+  assert.match(app, /居住环境/);
+  assert.match(app, /财务事项/);
+  assert.match(app, /维修维护/);
+  assert.match(app, /家庭里程碑/);
+  assert.match(app, /记录到时间轴/);
+  assert.match(styles, /\.timeline-list/);
+  assert.match(styles, /\.event-type-picker/);
+  assert.match(schema, /create table if not exists public\.household_events/);
+  assert.match(schema, /Members manage household events/);
+  assert.match(eventMigration, /create table if not exists public\.household_events/);
+  assert.match(eventMigration, /'family', 'environment', 'finance', 'maintenance', 'milestone'/);
+  assert.match(eventMigration, /enable row level security/);
+  assert.match(eventMigration, /supabase_realtime add table public\.household_events/);
+  assert.match(tasks, /createHouseholdEventRecord/);
+  assert.match(tasks, /deleteHouseholdEventRecord/);
+  assert.match(tasks, /table: "household_events"/);
   assert.match(app, /history\.slice\(currentHistoryPage \* 5, currentHistoryPage \* 5 \+ 5\)/);
   assert.match(app, /taskDisplayDate\(task\)/);
   assert.match(recurrenceAnchorMigration, /anchor_date := \(p_completed_at at time zone p_timezone\)::date/);

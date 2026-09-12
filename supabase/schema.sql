@@ -94,6 +94,20 @@ create table if not exists public.completion_records (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.household_events (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households(id) on delete cascade,
+  type text not null check (type in ('family', 'environment', 'finance', 'maintenance', 'milestone')),
+  title text not null check (char_length(trim(title)) between 1 and 100),
+  description text check (description is null or char_length(description) <= 1000),
+  occurred_at timestamptz not null,
+  amount numeric(12, 2) check (amount is null or amount >= 0),
+  currency text not null default 'USD' check (currency ~ '^[A-Z]{3}$'),
+  created_by uuid not null references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.task_instances
   drop constraint if exists task_instances_generated_from_completion_id_fkey;
 alter table public.task_instances
@@ -146,6 +160,7 @@ create index if not exists task_templates_household_idx on public.task_templates
 create index if not exists task_instances_household_date_idx on public.task_instances(household_id, scheduled_date);
 create index if not exists completion_records_household_idx on public.completion_records(household_id, completed_at desc);
 create index if not exists task_notes_household_idx on public.task_notes(household_id);
+create index if not exists household_events_household_occurred_idx on public.household_events(household_id, occurred_at desc);
 create index if not exists shopping_lists_household_order_idx on public.shopping_lists(household_id, sort_order, created_at);
 create index if not exists shopping_items_list_created_idx on public.shopping_items(list_id, created_at);
 create index if not exists shopping_items_household_idx on public.shopping_items(household_id);
@@ -169,6 +184,9 @@ create trigger task_templates_touch_updated_at before update on public.task_temp
 for each row execute function public.touch_updated_at();
 drop trigger if exists task_instances_touch_updated_at on public.task_instances;
 create trigger task_instances_touch_updated_at before update on public.task_instances
+for each row execute function public.touch_updated_at();
+drop trigger if exists household_events_touch_updated_at on public.household_events;
+create trigger household_events_touch_updated_at before update on public.household_events
 for each row execute function public.touch_updated_at();
 drop trigger if exists shopping_lists_touch_updated_at on public.shopping_lists;
 create trigger shopping_lists_touch_updated_at before update on public.shopping_lists
@@ -625,6 +643,7 @@ alter table public.task_templates enable row level security;
 alter table public.task_instances enable row level security;
 alter table public.completion_records enable row level security;
 alter table public.task_notes enable row level security;
+alter table public.household_events enable row level security;
 alter table public.shopping_lists enable row level security;
 alter table public.shopping_items enable row level security;
 
@@ -663,6 +682,11 @@ drop policy if exists "Members manage task notes" on public.task_notes;
 create policy "Members manage task notes" on public.task_notes for all to authenticated
 using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
 
+drop policy if exists "Members manage household events" on public.household_events;
+create policy "Members manage household events" on public.household_events for all to authenticated
+using (public.is_household_member(household_id))
+with check (public.is_household_member(household_id) and created_by = (select auth.uid()));
+
 drop policy if exists "Members manage shopping lists" on public.shopping_lists;
 create policy "Members manage shopping lists" on public.shopping_lists for all to authenticated
 using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
@@ -688,6 +712,11 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table public.completion_records;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.household_events;
 exception when duplicate_object then null;
 end $$;
 do $$

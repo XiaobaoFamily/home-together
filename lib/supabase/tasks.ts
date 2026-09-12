@@ -13,6 +13,25 @@ export type TaskCompletion = {
   note?: string;
 };
 
+export type HouseholdEventType =
+  | "family"
+  | "environment"
+  | "finance"
+  | "maintenance"
+  | "milestone";
+
+export type HouseholdEvent = {
+  id: string;
+  type: HouseholdEventType;
+  title: string;
+  description?: string;
+  occurredAt: string;
+  amount?: number;
+  currency: string;
+  createdBy: string;
+  createdByName: string;
+};
+
 export type AppTask = {
   id: string;
   templateId?: string;
@@ -42,6 +61,7 @@ export type HouseholdSnapshot = {
   weekStart: number;
   members: HouseholdMember[];
   tasks: AppTask[];
+  events: HouseholdEvent[];
 };
 
 type JoinedInstance = {
@@ -65,6 +85,17 @@ type JoinedInstance = {
     completed_at: string;
     is_voided: boolean;
   }>;
+};
+
+type JoinedEvent = {
+  id: string;
+  type: HouseholdEventType;
+  title: string;
+  description: string | null;
+  occurred_at: string;
+  amount: number | string | null;
+  currency: string;
+  created_by: string;
 };
 
 function recurrenceLabel(rule: Record<string, unknown> | null) {
@@ -100,7 +131,11 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
     : membership.households;
   const householdId = membership.household_id as string;
 
-  const [{ data: memberRows, error: memberError }, { data: instanceRows, error: taskError }] =
+  const [
+    { data: memberRows, error: memberError },
+    { data: instanceRows, error: taskError },
+    { data: eventRows, error: eventError },
+  ] =
     await Promise.all([
       supabase
         .from("household_members")
@@ -114,10 +149,16 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
         )
         .eq("household_id", householdId)
         .order("scheduled_date", { ascending: true }),
+      supabase
+        .from("household_events")
+        .select("id, type, title, description, occurred_at, amount, currency, created_by")
+        .eq("household_id", householdId)
+        .order("occurred_at", { ascending: false }),
     ]);
 
   if (memberError) throw memberError;
   if (taskError) throw taskError;
+  if (eventError) throw eventError;
 
   const members: HouseholdMember[] = (memberRows ?? []).map((row) => {
     const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
@@ -195,6 +236,18 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
     } satisfies AppTask;
   });
 
+  const events = ((eventRows ?? []) as unknown as JoinedEvent[]).map((row) => ({
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    description: row.description ?? undefined,
+    occurredAt: row.occurred_at,
+    amount: row.amount === null ? undefined : Number(row.amount),
+    currency: row.currency,
+    createdBy: row.created_by,
+    createdByName: memberNames.get(row.created_by) ?? "家庭成员",
+  } satisfies HouseholdEvent));
+
   return {
     householdId,
     householdName: household?.name ?? "我们的家",
@@ -202,6 +255,7 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
     weekStart: household?.week_start ?? 1,
     members,
     tasks,
+    events,
   };
 }
 
@@ -345,6 +399,43 @@ export async function updateCompletionNote(instanceId: string, note: string) {
   if (error) throw error;
 }
 
+export async function createHouseholdEventRecord(
+  householdId: string,
+  event: Pick<
+    HouseholdEvent,
+    "type" | "title" | "description" | "occurredAt" | "amount" | "currency"
+  >,
+) {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error("Supabase 尚未配置");
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("请先登录");
+
+  const { error } = await supabase.from("household_events").insert({
+    household_id: householdId,
+    type: event.type,
+    title: event.title.trim(),
+    description: event.description?.trim() || null,
+    occurred_at: event.occurredAt,
+    amount: event.amount ?? null,
+    currency: event.currency,
+    created_by: user.id,
+  });
+  if (error) throw error;
+}
+
+export async function deleteHouseholdEventRecord(eventId: string) {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error("Supabase 尚未配置");
+  const { error } = await supabase
+    .from("household_events")
+    .delete()
+    .eq("id", eventId);
+  if (error) throw error;
+}
+
 export async function undoTaskCompletion(instanceId: string) {
   const supabase = getSupabaseClient();
   if (!supabase) throw new Error("Supabase 尚未配置");
@@ -373,6 +464,11 @@ export function subscribeToHousehold(householdId: string, refresh: () => void) {
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "household_members", filter: `household_id=eq.${householdId}` },
+      refresh,
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "household_events", filter: `household_id=eq.${householdId}` },
       refresh,
     )
     .subscribe();
