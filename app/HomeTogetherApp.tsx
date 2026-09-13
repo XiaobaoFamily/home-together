@@ -1219,6 +1219,22 @@ function TimelineDate({ value }: { value: string }) {
   return <time dateTime={value} className="timeline-date"><span>{month}</span><strong>{day}</strong><em>{weekday}</em></time>;
 }
 
+function timelineMonthKey(value: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date(value));
+  const year = parts.find((part) => part.type === "year")?.value ?? "";
+  const month = parts.find((part) => part.type === "month")?.value ?? "";
+  return year + "-" + month;
+}
+
+function timelineMonthLabel(key: string) {
+  const [year, month] = key.split("-");
+  return year + " 年 " + Number(month) + " 月";
+}
+
 function TimelineView({
   tasks,
   events,
@@ -1236,6 +1252,8 @@ function TimelineView({
   onAddEvent: () => void;
   onDeleteEvent: (event: HouseholdEvent) => void;
 }) {
+  const [timelineMonthFilter, setTimelineMonthFilter] = useState("all");
+  const [timelinePage, setTimelinePage] = useState(0);
   const reminders = tasks
     .filter((task) => task.type === "one_off" && task.status !== "completed")
     .sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.title.localeCompare(right.title, "zh-CN"));
@@ -1250,6 +1268,23 @@ function TimelineView({
     timelineItems.push({ kind: "event", id: event.id, timestamp: event.occurredAt, event });
   }
   timelineItems.sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+  const timelineMonthOptions = [...new Set(timelineItems.map((item) => timelineMonthKey(item.timestamp)))];
+  const activeTimelineMonthFilter = timelineMonthFilter === "all" || timelineMonthOptions.includes(timelineMonthFilter)
+    ? timelineMonthFilter
+    : "all";
+  const filteredTimelineItems = activeTimelineMonthFilter === "all"
+    ? timelineItems
+    : timelineItems.filter((item) => timelineMonthKey(item.timestamp) === activeTimelineMonthFilter);
+  const timelinePageCount = Math.max(1, Math.ceil(filteredTimelineItems.length / 10));
+  const activeTimelinePage = Math.min(timelinePage, timelinePageCount - 1);
+  const visibleTimelineItems = filteredTimelineItems.slice(activeTimelinePage * 10, activeTimelinePage * 10 + 10);
+  const timelineMonthGroups = visibleTimelineItems.reduce<Array<{ key: string; items: TimelineItem[] }>>((groups, item) => {
+    const key = timelineMonthKey(item.timestamp);
+    const currentGroup = groups[groups.length - 1];
+    if (currentGroup?.key === key) currentGroup.items.push(item);
+    else groups.push({ key, items: [item] });
+    return groups;
+  }, []);
 
   return (
     <div className="page-shell timeline-page">
@@ -1264,8 +1299,15 @@ function TimelineView({
       </section>
 
       <section className="timeline-history">
-        <div className="timeline-section-heading history"><div><span className="timeline-heading-icon"><Clock3 /></span><p><strong>家庭记录</strong><span>已完成的一次性家事与手动记录的家庭事件。</span></p></div><span>{timelineItems.length}</span></div>
-        {timelineItems.length ? <div className="timeline-list">{timelineItems.map((item) => {
+        <div className="timeline-section-heading history"><div><span className="timeline-heading-icon"><Clock3 /></span><p><strong>家庭记录</strong><span>每页 10 条，可按月份查找，月份之间以分割线区分。</span></p></div><span>{timelineItems.length}</span></div>
+        {timelineItems.length ? <>
+        <div className="timeline-browser">
+          <label className="timeline-month-filter"><span>查看月份</span><select value={activeTimelineMonthFilter} onChange={(event) => { setTimelineMonthFilter(event.target.value); setTimelinePage(0); }}><option value="all">全部月份</option>{timelineMonthOptions.map((month) => <option value={month} key={month}>{timelineMonthLabel(month)}</option>)}</select></label>
+          <span>找到 {filteredTimelineItems.length} 条记录</span>
+        </div>
+        <div className="timeline-list">{timelineMonthGroups.map((group) => <section className="timeline-month-group" key={group.key} aria-label={timelineMonthLabel(group.key)}>
+          <div className="timeline-month-divider"><span>{timelineMonthLabel(group.key)}</span><i /></div>
+          <div className="timeline-month-entries">{group.items.map((item) => {
           if (item.kind === "task") {
             return (
               <article className="timeline-entry completed-task-entry" key={"task-" + item.id}>
@@ -1293,7 +1335,13 @@ function TimelineView({
               </div>
             </article>
           );
-        })}</div> : <EmptyState message="时间轴还是空的。完成一次性家务，或记录一件家里发生的事吧。" />}
+        })}</div>
+        </section>)}</div>
+        {timelinePageCount > 1 && <nav className="timeline-page-nav" aria-label="时间轴分页">
+          <button className="secondary-button" disabled={activeTimelinePage === 0} onClick={() => setTimelinePage((current) => Math.max(0, current - 1))}><ChevronLeft />上一页</button>
+          <span>第 {activeTimelinePage + 1} / {timelinePageCount} 页</span>
+          <button className="secondary-button" disabled={activeTimelinePage === timelinePageCount - 1} onClick={() => setTimelinePage((current) => Math.min(timelinePageCount - 1, current + 1))}>下一页<ChevronRight /></button>
+        </nav>}</> : <EmptyState message="时间轴还是空的。完成一次性家务，或记录一件家里发生的事吧。" />}
       </section>
     </div>
   );

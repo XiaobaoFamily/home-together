@@ -180,6 +180,20 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .timeline-section-heading.history .timeline-heading-icon { color: var(--mauve-dark); background: var(--mauve-soft); }
 .timeline-section-heading.history > span { color: var(--mauve-dark); background: var(--mauve-soft); }
 .timeline-list { display: grid; }
+.timeline-browser { margin: 0 4px 10px; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.timeline-browser > span { padding-bottom: 10px; color: var(--muted); font-size: 10px; }
+.timeline-month-filter { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 750; }
+.timeline-month-filter select { min-width: 170px; height: 40px; padding: 0 34px 0 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background-color: white; font: inherit; font-size: 12px; font-weight: 750; }
+.timeline-month-group { min-width: 0; }
+.timeline-month-divider { margin: 20px 0 9px; display: flex; align-items: center; gap: 12px; }
+.timeline-month-group:first-child .timeline-month-divider { margin-top: 2px; }
+.timeline-month-divider span { flex: 0 0 auto; color: var(--mauve-dark); font-size: 12px; font-weight: 850; letter-spacing: .04em; }
+.timeline-month-divider i { height: 1px; flex: 1; background: linear-gradient(90deg, #d8c5ce, rgba(216,197,206,0)); }
+.timeline-month-entries { display: grid; }
+.timeline-page-nav { padding-top: 12px; display: flex; align-items: center; justify-content: center; gap: 14px; }
+.timeline-page-nav button { min-width: 104px; justify-content: center; }
+.timeline-page-nav button svg { width: 16px; }
+.timeline-page-nav > span { min-width: 86px; color: var(--muted); font-size: 11px; font-weight: 750; text-align: center; }
 .timeline-entry { min-width: 0; display: grid; grid-template-columns: 58px 28px minmax(0, 1fr); align-items: stretch; }
 .timeline-date { padding-top: 16px; display: flex; flex-direction: column; align-items: flex-end; color: var(--muted); font-style: normal; text-align: right; }
 .timeline-date span { color: var(--mauve); font-size: 9px; font-weight: 800; }
@@ -458,6 +472,9 @@ button.timeline-card:hover { border-color: #d9bdcb; background: #fffbfd; }
   .timeline-reminders { padding: 14px 11px; border-radius: 17px; }
   .timeline-section-heading { align-items: flex-start; }
   .timeline-section-heading p span { font-size: 10px; }
+  .timeline-browser { align-items: stretch; flex-direction: column; }
+  .timeline-browser > span { padding-bottom: 0; }
+  .timeline-month-filter select { width: 100%; }
   .timeline-entry { grid-template-columns: 42px 20px minmax(0, 1fr); }
   .timeline-date { padding-top: 14px; }
   .timeline-date strong { font-size: 17px; }

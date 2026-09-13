@@ -131,6 +131,15 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
   assert.match(app, /家庭里程碑/);
   assert.match(app, /记录到时间轴/);
   assert.match(styles, /\.timeline-list/);
+  assert.match(app, /timelinePageCount/);
+  assert.match(app, /activeTimelinePage \* 10/);
+  assert.match(app, /timelineMonthGroups/);
+  assert.match(app, /全部月份/);
+  assert.match(app, /上一页/);
+  assert.match(app, /下一页/);
+  assert.match(styles, /\.timeline-month-divider/);
+  assert.match(styles, /\.timeline-month-filter/);
+  assert.match(styles, /\.timeline-page-nav/);
   assert.match(styles, /\.event-type-picker/);
   assert.match(schema, /create table if not exists public\.household_events/);
   assert.match(schema, /Members manage household events/);
