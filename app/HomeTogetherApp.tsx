@@ -386,6 +386,12 @@ function toDateTimeLocal(value: string) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
+function defaultFamilyEventTitle(value: string) {
+  const [year = "", month = "", day = ""] = value.slice(0, 10).split("-");
+  if (!year || !month || !day) return "家事";
+  return year + "年" + Number(month) + "月" + Number(day) + "日家事";
+}
+
 function initials(name: string) {
   return name.trim().slice(0, 1).toUpperCase();
 }
@@ -1591,10 +1597,33 @@ function TaskEditorModal({
 
 function EventEditorModal({ onClose, onSave }: { onClose: () => void; onSave: (event: HouseholdEventDraft) => void }) {
   const [type, setType] = useState<HouseholdEventType>("family");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(() => defaultFamilyEventTitle(toDateTimeLocal(new Date().toISOString())));
   const [description, setDescription] = useState("");
   const [occurredAt, setOccurredAt] = useState(toDateTimeLocal(new Date().toISOString()));
   const [amount, setAmount] = useState("");
+  const [usesDefaultFamilyTitle, setUsesDefaultFamilyTitle] = useState(true);
+
+  function chooseType(nextType: HouseholdEventType) {
+    setType(nextType);
+    if (nextType === "family") {
+      if (!title.trim() || usesDefaultFamilyTitle) {
+        setTitle(defaultFamilyEventTitle(occurredAt));
+        setUsesDefaultFamilyTitle(true);
+      }
+      return;
+    }
+    if (usesDefaultFamilyTitle) {
+      setTitle("");
+      setUsesDefaultFamilyTitle(false);
+    }
+  }
+
+  function changeOccurredAt(value: string) {
+    setOccurredAt(value);
+    if (type === "family" && usesDefaultFamilyTitle) {
+      setTitle(defaultFamilyEventTitle(value));
+    }
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -1618,10 +1647,10 @@ function EventEditorModal({ onClose, onSave }: { onClose: () => void; onSave: (e
         <form onSubmit={submit}>
           <div className="field"><span>事件类型</span><div className="event-type-picker">{EVENT_TYPE_OPTIONS.map((option) => {
             const Icon = option.icon;
-            return <button key={option.id} type="button" className={type === option.id ? "active" : ""} onClick={() => setType(option.id)}><Icon /><span>{option.label}</span><small>{option.hint}</small></button>;
+            return <button key={option.id} type="button" className={type === option.id ? "active" : ""} onClick={() => chooseType(option.id)}><Icon /><span>{option.label}</span><small>{option.hint}</small></button>;
           })}</div></div>
-          <label className="field"><span>标题</span><input required maxLength={100} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：客厅换了新的落地灯" /></label>
-          <label className="field"><span>发生时间</span><span className="native-date-control"><input type="datetime-local" required max={toDateTimeLocal(new Date().toISOString())} value={occurredAt} onChange={(event) => setOccurredAt(event.target.value)} /></span></label>
+          <label className="field"><span>标题</span><input required maxLength={100} value={title} onChange={(event) => { setTitle(event.target.value); setUsesDefaultFamilyTitle(false); }} placeholder="例如：客厅换了新的落地灯" />{type === "family" && usesDefaultFamilyTitle && <small className="week-preview">已按发生日期生成默认家事日记标题，可直接修改。</small>}</label>
+          <label className="field"><span>发生时间</span><span className="native-date-control"><input type="datetime-local" required max={toDateTimeLocal(new Date().toISOString())} value={occurredAt} onChange={(event) => changeOccurredAt(event.target.value)} /></span></label>
           {type === "finance" && <label className="field"><span>金额（可选，USD）</span><input type="number" min={0} step="0.01" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" /></label>}
           <label className="field"><span>补充说明（可选）</span><textarea maxLength={1000} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="记录背景、变化或想一起记住的细节" /></label>
           <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button"><Plus />记录到时间轴</button></div>

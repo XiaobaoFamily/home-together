@@ -125,6 +125,9 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
   assert.match(app, /recurringByTemplate/);
   assert.match(app, /left\.dueDate\.localeCompare\(right\.dueDate\)/);
   assert.match(app, /家庭事项/);
+  assert.match(app, /defaultFamilyEventTitle/);
+  assert.match(app, /已按发生日期生成默认家事日记标题/);
+  assert.match(styles, /\.event-entry\.family \.timeline-card/);
   assert.match(app, /居住环境/);
   assert.match(app, /财务事项/);
   assert.match(app, /维修维护/);

@@ -210,6 +210,9 @@ button.timeline-card:hover { border-color: #d9bdcb; background: #fffbfd; }
 .timeline-card > svg { width: 18px; color: var(--muted); }
 .timeline-card-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; color: var(--mauve-dark); background: var(--mauve-soft); }
 .timeline-card-icon.completed { color: #397560; background: var(--mint); }
+.event-entry.family .timeline-card { border-color: #eadcae; background: linear-gradient(135deg, #fff9df, #fffdf6); box-shadow: 0 9px 30px rgba(133,105,40,.07); }
+.event-entry.family .timeline-card-icon.event { color: #8a7028; background: rgba(255,255,255,.78); }
+.event-entry.family .timeline-kind { color: #8a7028; }
 .timeline-card-icon svg { width: 19px; }
 .timeline-card-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
 .timeline-kind { margin-bottom: 3px; color: var(--mauve); font-size: 9px; font-weight: 850; letter-spacing: .05em; }
