@@ -128,30 +128,6 @@ create table if not exists public.task_notes (
   constraint note_target_required check (template_id is not null or instance_id is not null)
 );
 
-create table if not exists public.shopping_lists (
-  id uuid primary key default gen_random_uuid(),
-  household_id uuid not null references public.households(id) on delete cascade,
-  name text not null check (char_length(trim(name)) between 1 and 60),
-  sort_order integer not null default 0,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (id, household_id),
-  unique (household_id, name)
-);
-
-create table if not exists public.shopping_items (
-  id uuid primary key default gen_random_uuid(),
-  household_id uuid not null references public.households(id) on delete cascade,
-  list_id uuid not null,
-  name text not null check (char_length(trim(name)) between 1 and 120),
-  is_checked boolean not null default false,
-  checked_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  foreign key (list_id, household_id)
-    references public.shopping_lists(id, household_id) on delete cascade
-);
-
 -- A profile can create or join exactly one household. The unique index also
 -- protects against concurrent create/join requests that pass application checks.
 create unique index if not exists household_members_one_household_per_profile
@@ -161,9 +137,6 @@ create index if not exists task_instances_household_date_idx on public.task_inst
 create index if not exists completion_records_household_idx on public.completion_records(household_id, completed_at desc);
 create index if not exists task_notes_household_idx on public.task_notes(household_id);
 create index if not exists household_events_household_occurred_idx on public.household_events(household_id, occurred_at desc);
-create index if not exists shopping_lists_household_order_idx on public.shopping_lists(household_id, sort_order, created_at);
-create index if not exists shopping_items_list_created_idx on public.shopping_items(list_id, created_at);
-create index if not exists shopping_items_household_idx on public.shopping_items(household_id);
 
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql as $$
@@ -188,40 +161,6 @@ for each row execute function public.touch_updated_at();
 drop trigger if exists household_events_touch_updated_at on public.household_events;
 create trigger household_events_touch_updated_at before update on public.household_events
 for each row execute function public.touch_updated_at();
-drop trigger if exists shopping_lists_touch_updated_at on public.shopping_lists;
-create trigger shopping_lists_touch_updated_at before update on public.shopping_lists
-for each row execute function public.touch_updated_at();
-drop trigger if exists shopping_items_touch_updated_at on public.shopping_items;
-create trigger shopping_items_touch_updated_at before update on public.shopping_items
-for each row execute function public.touch_updated_at();
-
-create or replace function public.seed_default_shopping_lists()
-returns trigger
-language plpgsql
-security definer set search_path = ''
-as $$
-begin
-  insert into public.shopping_lists (household_id, name, sort_order)
-  values
-    (new.id, 'Costco', 0),
-    (new.id, 'H-Mart', 1),
-    (new.id, 'H-E-B', 2)
-  on conflict do nothing;
-  return new;
-end;
-$$;
-
-drop trigger if exists households_seed_default_shopping_lists on public.households;
-create trigger households_seed_default_shopping_lists
-after insert on public.households
-for each row execute function public.seed_default_shopping_lists();
-
-insert into public.shopping_lists (household_id, name, sort_order)
-select household.id, starter.name, starter.sort_order
-from public.households as household
-cross join (values ('Costco', 0), ('H-Mart', 1), ('H-E-B', 2)) as starter(name, sort_order)
-on conflict do nothing;
-
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -644,8 +583,6 @@ alter table public.task_instances enable row level security;
 alter table public.completion_records enable row level security;
 alter table public.task_notes enable row level security;
 alter table public.household_events enable row level security;
-alter table public.shopping_lists enable row level security;
-alter table public.shopping_items enable row level security;
 
 drop policy if exists "Profiles visible within shared households" on public.profiles;
 create policy "Profiles visible within shared households" on public.profiles for select to authenticated
@@ -687,13 +624,6 @@ create policy "Members manage household events" on public.household_events for a
 using (public.is_household_member(household_id))
 with check (public.is_household_member(household_id) and created_by = (select auth.uid()));
 
-drop policy if exists "Members manage shopping lists" on public.shopping_lists;
-create policy "Members manage shopping lists" on public.shopping_lists for all to authenticated
-using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
-drop policy if exists "Members manage shopping items" on public.shopping_items;
-create policy "Members manage shopping items" on public.shopping_items for all to authenticated
-using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
-
 grant usage on schema public to authenticated;
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant execute on function public.create_household(text, text) to authenticated;
@@ -717,15 +647,5 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table public.household_events;
-exception when duplicate_object then null;
-end $$;
-do $$
-begin
-  alter publication supabase_realtime add table public.shopping_lists;
-exception when duplicate_object then null;
-end $$;
-do $$
-begin
-  alter publication supabase_realtime add table public.shopping_items;
 exception when duplicate_object then null;
 end $$;

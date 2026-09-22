@@ -17,7 +17,7 @@ test("builds a GitHub Pages-ready Home Together application", async () => {
 });
 
 test("ships a subpath-safe installable PWA and Supabase security baseline", async () => {
-  const [manifestText, serviceWorker, schema, householdMigration, inviteMigration, taskMutationMigration, oneOffTimingMigration, completionTimeMigration, shoppingMigration, recurrenceAnchorMigration, eventMigration, app, styles, tasks, shopping, workflow, pagesConfig, packageJson] = await Promise.all([
+  const [manifestText, serviceWorker, schema, householdMigration, inviteMigration, taskMutationMigration, oneOffTimingMigration, completionTimeMigration, recurrenceAnchorMigration, eventMigration, shoppingRemovalMigration, app, styles, tasks, workflow, pagesConfig, packageJson] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8"),
@@ -26,13 +26,12 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
     readFile(new URL("../supabase/migrations/202608160003_task_edit_delete.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/202608170001_one_off_task_timing.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/202608180001_edit_completion_time.sql", import.meta.url), "utf8"),
-    readFile(new URL("../supabase/migrations/202608190001_shopping_lists.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/202609110001_anchor_recurrence_to_completion.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/202609120001_household_events_timeline.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/202609210001_remove_shopping_lists.sql", import.meta.url), "utf8"),
     readFile(new URL("../app/HomeTogetherApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/supabase/tasks.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/supabase/shopping.ts", import.meta.url), "utf8"),
     readFile(new URL("../.github/workflows/deploy-pages.yml", import.meta.url), "utf8"),
     readFile(new URL("../vite.pages.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -75,7 +74,10 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
   assert.match(tasks, /one_off_timing/);
   assert.match(app, /今日截止提醒/);
   assert.match(app, /本周内完成/);
-  assert.match(app, /这周还待完成的周期家务/);
+  assert.match(app, /之前没完成/);
+  assert.match(app, /task\.status === "pending" && taskWindowEnd\(task\) <= visibleWeekEnd/);
+  assert.match(app, /task\.dueDate <= visibleWeekEnd/);
+  assert.match(app, /taskWindowEnd\(left\)\.localeCompare\(taskWindowEnd\(right\)\)/);
   assert.match(app, /task\.type === "recurring" && task\.status === "pending"/);
   assert.match(app, /setWeekStartDate\(\(current\) => addDays\(current, -7\)\)/);
   assert.match(app, /setWeekStartDate\(\(current\) => addDays\(current, 7\)\)/);
@@ -105,21 +107,17 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
   assert.match(styles, /min-inline-size: 0/);
   assert.match(styles, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(styles, /max-width: 100dvw/);
-  assert.match(app, /id: "shopping", label: "买菜单"/);
+  assert.doesNotMatch(app, /id: "shopping"/);
+  assert.doesNotMatch(app, /买菜单/);
+  assert.doesNotMatch(styles, /\.shopping-/);
+  assert.doesNotMatch(schema, /shopping_lists|shopping_items|seed_default_shopping_lists/);
+  assert.match(styles, /grid-template-columns: repeat\(3, 1fr\)/);
+  assert.match(shoppingRemovalMigration, /drop trigger if exists households_seed_default_shopping_lists/);
+  assert.match(shoppingRemovalMigration, /alter publication supabase_realtime drop table public\.shopping_items/);
+  assert.match(shoppingRemovalMigration, /drop function if exists public\.seed_default_shopping_lists\(\)/);
+  assert.match(shoppingRemovalMigration, /drop table if exists public\.shopping_items/);
+  assert.match(shoppingRemovalMigration, /drop table if exists public\.shopping_lists/);
   assert.doesNotMatch(app, /id: "settings"/);
-  assert.match(app, /Costco/);
-  assert.match(app, /H-Mart/);
-  assert.match(app, /H-E-B/);
-  assert.match(app, /要清空这个买菜单吗/);
-  assert.match(schema, /create table if not exists public\.shopping_lists/);
-  assert.match(schema, /create table if not exists public\.shopping_items/);
-  assert.match(shoppingMigration, /seed_default_shopping_lists/);
-  assert.match(shoppingMigration, /'Costco'/);
-  assert.match(shoppingMigration, /'H-Mart'/);
-  assert.match(shoppingMigration, /'H-E-B'/);
-  assert.match(shoppingMigration, /enable row level security/);
-  assert.match(shopping, /subscribeToShoppingLists/);
-  assert.match(shopping, /clearShoppingListItems/);
   assert.match(tasks, /completionHistory/);
   assert.match(tasks, /historyByTemplate/);
   assert.match(app, /recurringByTemplate/);
