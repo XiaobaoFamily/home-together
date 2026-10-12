@@ -9,6 +9,7 @@ export type HouseholdMember = {
 
 export type TaskCompletion = {
   id: string;
+  instanceId?: string;
   completedAt: string;
   note?: string;
 };
@@ -180,6 +181,7 @@ export async function loadHouseholdSnapshot(): Promise<HouseholdSnapshot | null>
       if (completion.is_voided) continue;
       history.push({
         id: completion.id,
+        instanceId: row.id,
         completedAt: completion.completed_at,
         note: completion.note ?? undefined,
       });

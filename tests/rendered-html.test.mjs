@@ -78,7 +78,7 @@ test("ships a subpath-safe installable PWA and Supabase security baseline", asyn
   assert.match(app, /task\.status === "pending" && taskWindowEnd\(task\) <= visibleWeekEnd/);
   assert.match(app, /task\.dueDate <= visibleWeekEnd/);
   assert.match(app, /taskWindowEnd\(left\)\.localeCompare\(taskWindowEnd\(right\)\)/);
-  assert.match(app, /task\.type === "recurring" && task\.status === "pending"/);
+  assert.match(app, /修改完成时间/);
   assert.match(app, /setWeekStartDate\(\(current\) => addDays\(current, -7\)\)/);
   assert.match(app, /setWeekStartDate\(\(current\) => addDays\(current, 7\)\)/);
   assert.match(app, /id: "timeline", label: "时间轴"/);

@@ -932,7 +932,7 @@ function AppShell({
       />}
       {showEventAdd && <EventEditorModal onClose={() => setShowEventAdd(false)} onSave={addEvent} />}
       {noteTarget && <CompletionSheet task={noteTarget} onClose={() => setNoteTarget(null)} onSave={saveNote} />}
-      {detailTarget && <TaskDetail task={tasks.find((task) => task.id === detailTarget.id) ?? detailTarget} onClose={() => setDetailTarget(null)} onToggle={(task) => { setDetailTarget(null); void toggleTask(task); }} onEdit={(task) => { setDetailTarget(null); setEditTarget(task); }} onDelete={(task) => { setDetailTarget(null); setDeleteTarget(task); }} />}
+      {detailTarget && <TaskDetail task={tasks.find((task) => task.id === detailTarget.id) ?? detailTarget} onClose={() => setDetailTarget(null)} onToggle={(task) => { setDetailTarget(null); void toggleTask(task); }} onEdit={(task) => { setDetailTarget(null); setEditTarget(tasks.find((item) => item.id === task.id) ?? task); }} onDelete={(task) => { setDetailTarget(null); setDeleteTarget(task); }} />}
       {editTarget && <TaskEditorModal initialTask={editTarget} members={members} onClose={() => setEditTarget(null)} onSave={editTask} />}
       {deleteTarget && <DeleteTaskDialog task={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={deleteTask} />}
       {eventDeleteTarget && <DeleteEventDialog event={eventDeleteTarget} onClose={() => setEventDeleteTarget(null)} onConfirm={deleteEvent} />}
@@ -958,7 +958,7 @@ function WeekView({ tasks, members, onToggle, onOpen, onAdd }: { tasks: AppTask[
     ),
   ).sort((left, right) => left.dueDate.localeCompare(right.dueDate));
   const weekCompletionTasks = weekTasks.filter((task) =>
-    isWeekOneOff(task) || (task.type === "recurring" && task.status === "pending"),
+    task.status === "pending",
   ).sort((left, right) =>
     taskWindowEnd(left).localeCompare(taskWindowEnd(right)) || left.title.localeCompare(right.title, "zh-CN"),
   );
@@ -993,9 +993,9 @@ function WeekView({ tasks, members, onToggle, onOpen, onAdd }: { tasks: AppTask[
       </section>
 
       <section className="week-goals">
-        <div className="section-heading"><div><span className="section-dot lavender" /><div><h2>本周内完成</h2><p>之前没完成，以及本周应完成的按周事项和周期家务</p></div></div><span className="count-pill">{weekCompletionTasks.filter((task) => task.status === "pending").length}</span></div>
+        <div className="section-heading"><div><span className="section-dot lavender" /><div><h2>本周内完成</h2><p>之前没完成，以及本周应完成的周期家务和一次性家务</p></div></div><span className="count-pill">{weekCompletionTasks.length}</span></div>
         <div className="task-list">
-          {weekCompletionTasks.length ? weekCompletionTasks.map((task) => <TaskRow key={task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="截至这周日没有需要补上或完成的按周事项、周期家务。" />}
+          {weekCompletionTasks.length ? weekCompletionTasks.map((task) => <TaskRow key={task.id} task={task} onToggle={onToggle} onOpen={onOpen} />) : <EmptyState message="截至这周日没有待完成的家务。" />}
         </div>
       </section>
 
@@ -1004,7 +1004,7 @@ function WeekView({ tasks, members, onToggle, onOpen, onAdd }: { tasks: AppTask[
         <div className="day-groups">
           {visibleWeek.map((date, index) => {
             const dayTasks = weekTasks.filter((task) =>
-              !isWeekOneOff(task) && taskDisplayDate(task) === date && !alertIds.has(task.id) && !weekCompletionIds.has(task.id),
+              taskDisplayDate(task) === date && !alertIds.has(task.id) && !weekCompletionIds.has(task.id),
             );
             if (!dayTasks.length && date !== DEMO_TODAY) return null;
             return (
@@ -1394,7 +1394,7 @@ function TaskDetail({ task, onClose, onToggle, onEdit, onDelete }: { task: AppTa
   const history = task.completionHistory?.length
     ? task.completionHistory
     : task.completedAt
-      ? [{ id: task.id, completedAt: task.completedAt, note: task.note }]
+      ? [{ id: task.id, instanceId: task.id, completedAt: task.completedAt, note: task.note }]
       : [];
   const historyPageCount = Math.max(1, Math.ceil(history.length / 5));
   const currentHistoryPage = Math.min(historyPage, historyPageCount - 1);
@@ -1410,7 +1410,7 @@ function TaskDetail({ task, onClose, onToggle, onEdit, onDelete }: { task: AppTa
         {task.type === "recurring" && <section className="rhythm-card"><h3>这个事项的节奏</h3><div><p><span>上次完成</span><strong>{formatStoredMoment(task.lastCompleted, "还没有记录")}</strong></p><i /><p><span>下次应做</span><strong>{formatStoredMoment(task.nextDue ?? task.dueDate, "还没有安排")}</strong></p></div><small>下一次日期按实际完成日期加上原定周期计算。</small></section>}
         <section className="history-section">
           <div className="history-heading"><h3>完成历史</h3>{history.length > 0 && <span>{history.length} 条记录</span>}</div>
-          {visibleHistory.length ? <div className="history-list">{visibleHistory.map((record) => <div className="history-item" key={record.id}><span><Check /></span><div><strong>{formatDateTime(record.completedAt)} 完成</strong><p>{record.note || "没有添加备注"}</p></div></div>)}</div> : <EmptyState message="完成后会在这里留下记录。" />}
+          {visibleHistory.length ? <div className="history-list">{visibleHistory.map((record) => <div className="history-item" key={record.id}><span><Check /></span><div><strong>{formatDateTime(record.completedAt)} 完成</strong><p>{record.note || "没有添加备注"}</p>{record.instanceId && <button className="text-button" onClick={() => onEdit({ ...task, id: record.instanceId!, status: "completed", completedAt: record.completedAt, note: record.note })}><Pencil />修改完成时间</button>}</div></div>)}</div> : <EmptyState message="完成后会在这里留下记录。" />}
           {historyPageCount > 1 && <div className="history-pagination"><button className="secondary-button" disabled={currentHistoryPage === 0} onClick={() => setHistoryPage((page) => Math.max(0, page - 1))}><ChevronLeft />上一页</button><span>{currentHistoryPage + 1} / {historyPageCount}</span><button className="secondary-button" disabled={currentHistoryPage >= historyPageCount - 1} onClick={() => setHistoryPage((page) => Math.min(historyPageCount - 1, page + 1))}>下一页<ChevronRight /></button></div>}
         </section>
         <div className="detail-actions"><button className={task.status === "completed" ? "secondary-button wide" : "primary-button wide"} onClick={() => onToggle(task)}>{task.status === "completed" ? "撤销完成" : <><Check />标记完成</>}</button><button className="secondary-button wide" onClick={() => onEdit(task)}><Pencil />编辑家务</button><button className="danger-button wide" onClick={() => onDelete(task)}><Trash2 />删除家务</button></div>
